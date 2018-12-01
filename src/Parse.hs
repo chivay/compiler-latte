@@ -1,15 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Parse where
 
-import           Abs
-
+import           Control.Monad
 import           Text.ParserCombinators.Parsec
 import           Text.ParserCombinators.Parsec.Expr
 import           Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token
                                                as Token
 import qualified Data.Text                     as T
-import           Control.Monad
+
+import           Abs
 
 languageDef = emptyDef
     { Token.commentStart    = "/*"
@@ -73,21 +73,18 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
     typVoid = reserved "void" >> return TBool
 
 stmt :: Parser Stmt
-stmt   = do
-    s <-    blockStmt
-        <|> ifStmt
-        <|> ifElseStmt
-        <|> whileStmt
-        <|> (do reserved "return"; e <- optionMaybe expr; semi; return $ Ret e)
-        <|> (do s <- assStmt; whitespace; semi; return s)
-        <|> (do s <- exprStmt; whitespace; semi; return s)
-        <|> (do semi >> return Empty)
-    return s
+stmt   =
+    blockStmt
+    <|> ifStmt
+    <|> ifElseStmt
+    <|> whileStmt
+    <|> (do reserved "return"; e <- optionMaybe expr; semi; return $ Ret e)
+    <|> (do s <- assStmt; whitespace; semi; return s)
+    <|> (do s <- exprStmt; whitespace; semi; return s)
+    <|> (semi >> return Empty)
 
 exprStmt :: Parser Stmt
-exprStmt = do
-    e <- expr
-    return $ ExpS e
+exprStmt = ExpS <$> expr
 
 blockStmt :: Parser Stmt
 blockStmt = do
