@@ -48,7 +48,7 @@ languageDef = emptyDef
 
 lexer = Token.makeTokenParser languageDef
 
-ident = Token.identifier lexer
+identifier = Token.identifier lexer
 reserved = Token.reserved lexer
 reservedOp = Token.reservedOp lexer
 parens = Token.parens lexer
@@ -60,6 +60,9 @@ whitespace = Token.whiteSpace lexer
 commaSep = Token.commaSep lexer
 semiSep = Token.semiSep lexer
 stringLiteral = Token.stringLiteral lexer
+
+ident :: Parser T.Text
+ident = fmap T.pack identifier
 
 typ :: Parser Type
 typ = typInteger <|> typString <|> typBool <|> typVoid
@@ -120,13 +123,13 @@ expr = buildExpressionParser operators terms
             <|> try functionCall
             <|> fmap LitInt         integer
             <|> fmap (LitString . T.pack) stringLiteral
-            <|> fmap (Var . T.pack) ident
+            <|> fmap Var ident
             <|> (reserved "true" >> return LitTrue)
             <|> (reserved "false" >> return LitFalse)
     functionCall = do
         name <- ident
         args <- parens (commaSep expr)
-        return $ Call (T.pack name) args
+        return $ Call name args
 
 ifStmt :: Parser Stmt
 ifStmt = do
@@ -153,7 +156,7 @@ assStmt :: Parser Stmt
 assStmt = do
     var <- ident
     reserved "="
-    Ass (T.pack var) <$> expr
+    Ass var <$> expr
 
 
 varDecl :: Parser DeclItem
@@ -162,10 +165,10 @@ varDecl = withInit <|> noInit
     withInit = do
         name <- ident
         reserved "="
-        DeclItem (T.pack name) . Just <$> expr
+        DeclItem name . Just <$> expr
     noInit = do
         name <- ident
-        return $ DeclItem (T.pack name) Nothing
+        return $ DeclItem name Nothing
 
 declStmt :: Parser Stmt
 declStmt = do
@@ -176,7 +179,7 @@ declStmt = do
 typVar :: Parser TypVar
 typVar = do
     t <- typ
-    TypVar t . T.pack <$> ident
+    TypVar t <$> ident
 
 topDef :: Parser TopDef
 topDef = do
@@ -184,7 +187,7 @@ topDef = do
     name  <- ident
     args  <- parens (commaSep typVar)
     (Block stmts) <- blockStmt
-    return $ TopDef t (T.pack name) args stmts
+    return $ TopDef t name args stmts
 
 programParser :: Parser Program
 programParser = many topDef
