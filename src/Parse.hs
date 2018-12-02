@@ -16,6 +16,7 @@ languageDef =
     { Token.commentStart = "/*"
     , Token.commentEnd = "*/"
     , Token.commentLine = "//"
+    , Token.nestedComments = True
     , Token.identStart = letter
     , Token.identLetter = alphaNum <|> oneOf ['_']
     , Token.reservedNames =
@@ -86,23 +87,43 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
 
 stmt :: Parser Stmt
 stmt =
-  blockStmt <|> ifStmt <|> ifElseStmt <|> whileStmt <|>
-  (do reserved "return"
-      e <- optionMaybe expr
-      semi
-      return $ Ret e) <|>
-  (do s <- assStmt
-      whitespace
-      semi
-      return s) <|>
-  (do s <- exprStmt
-      whitespace
-      semi
-      return s) <|>
+  blockStmt <|> (try ifElseStmt) <|> ifStmt <|> whileStmt <|> returnStmt <|>
+  exprStmt <|>
+  assStmt <|>
+  declStmt <|>
+  incStmt <|>
+  decStmt <|>
   (semi >> return Empty)
 
+incStmt :: Parser Stmt
+incStmt =
+  try
+    (do var <- ident
+        reservedOp "++"
+        return $ Incr var)
+
+decStmt :: Parser Stmt
+decStmt =
+  try
+    (do var <- ident
+        reservedOp "--"
+        return $ Incr var)
+
+returnStmt :: Parser Stmt
+returnStmt = do
+  reserved "return"
+  e <- optionMaybe expr
+  whitespace
+  semi
+  return $ Ret e
+
 exprStmt :: Parser Stmt
-exprStmt = ExpS <$> expr
+exprStmt =
+  try
+    (do e <- try expr
+        whitespace
+        semi
+        return $ ExpS e)
 
 blockStmt :: Parser Stmt
 blockStmt = do
@@ -156,7 +177,6 @@ ifElseStmt = do
   cond <- parens expr
   stm <- stmt
   reserved "else"
-  stm' <- stmt
   IfElse cond stm <$> stmt
 
 whileStmt :: Parser Stmt
@@ -167,12 +187,15 @@ whileStmt = do
 
 assStmt :: Parser Stmt
 assStmt = do
-  var <- ident
-  reserved "="
+  var <-
+    try
+      (do var <- ident
+          reserved "="
+          return var)
   Ass var <$> expr
 
 varDecl :: Parser DeclItem
-varDecl = withInit <|> noInit
+varDecl = (try withInit) <|> noInit
   where
     withInit = do
       name <- ident
@@ -186,7 +209,7 @@ declStmt :: Parser Stmt
 declStmt = do
   t <- typ
   items <- commaSep varDecl
-  return $ Decl t []
+  return $ Decl t items
 
 typVar :: Parser TypVar
 typVar = do
@@ -201,5 +224,8 @@ topDef = do
   (Block stmts) <- blockStmt
   return $ TopDef t name args stmts
 
-programParser :: Parser Program
-programParser = many topDef
+program :: Parser Program
+program = many topDef <* eof
+
+parseSource :: FilePath -> IO (Either ParseError Program)
+parseSource = parseFromFile program
