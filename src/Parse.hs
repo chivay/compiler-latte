@@ -86,14 +86,15 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
     typVoid = reserved "void" >> return TBool
 
 stmt :: Parser Stmt
-stmt = whitespace >>(
-  blockStmt <|> (try ifElseStmt) <|> ifStmt <|> whileStmt <|> returnStmt <|>
-  exprStmt <|>
-  assStmt <|>
-  declStmt <|>
-  incStmt <|>
-  decStmt <|>
-  (semi >> return Empty))
+stmt =
+  whitespace >>
+  (blockStmt <|> (try ifElseStmt) <|> ifStmt <|> whileStmt <|> returnStmt <|>
+   exprStmt <|>
+   assStmt <|>
+   declStmt <|>
+   incStmt <|>
+   decStmt <|>
+   (semi >> return Empty))
 
 incStmt :: Parser Stmt
 incStmt =
@@ -226,7 +227,7 @@ topDef = do
   return $ TopDef t name args stmts
 
 program :: Parser Program
-program = many topDef <* eof
+program = Program <$> many topDef <* eof
 
 parseSource :: FilePath -> IO (Either ParseError Program)
 parseSource = parseFromFile program

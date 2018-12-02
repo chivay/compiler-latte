@@ -13,6 +13,7 @@ tests:
 copyright: 2018 Author name here
 maintainer: example@example.com
 dependencies:
+- pretty
 - parsec
 - mtl
 - base >= 4.7 && < 5
@@ -35,4 +36,5 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - compiler-latte
+description: Please see the README on GitHub at <https://github.com/githubuser/compiler-latte#readme>
 description: Please see the README on GitHub at <https://github.com/githubuser/compiler-latte#readme>

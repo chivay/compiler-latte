@@ -18,7 +18,9 @@ data TypVar =
          Ident
   deriving (Eq, Show)
 
-type Program = [TopDef]
+data Program =
+  Program [TopDef]
+  deriving (Eq, Show)
 
 data TopDef =
   TopDef Type
