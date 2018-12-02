@@ -86,14 +86,14 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
     typVoid = reserved "void" >> return TBool
 
 stmt :: Parser Stmt
-stmt =
+stmt = whitespace >>(
   blockStmt <|> (try ifElseStmt) <|> ifStmt <|> whileStmt <|> returnStmt <|>
   exprStmt <|>
   assStmt <|>
   declStmt <|>
   incStmt <|>
   decStmt <|>
-  (semi >> return Empty)
+  (semi >> return Empty))
 
 incStmt :: Parser Stmt
 incStmt =
@@ -143,15 +143,15 @@ expr = buildExpressionParser operators terms
         , Infix (reservedOp "-" >> return (Add Minus)) AssocLeft
         ]
       , [Prefix (reservedOp "!" >> return Not)]
-      , [ Infix (reservedOp "&&" >> return And) AssocLeft
-        , Infix (reservedOp "||" >> return Or) AssocLeft
-        ]
       , [ Infix (reservedOp "<" >> return (Comp Less)) AssocNone
         , Infix (reservedOp "<=" >> return (Comp LessEqual)) AssocNone
         , Infix (reservedOp ">" >> return (Comp Greater)) AssocNone
         , Infix (reservedOp ">=" >> return (Comp GreaterEqual)) AssocNone
         , Infix (reservedOp "==" >> return (Comp Equal)) AssocNone
         , Infix (reservedOp "!=" >> return (Comp NEqual)) AssocNone
+        ]
+      , [ Infix (reservedOp "&&" >> return And) AssocLeft
+        , Infix (reservedOp "||" >> return Or) AssocLeft
         ]
       ]
     terms =
@@ -218,6 +218,7 @@ typVar = do
 
 topDef :: Parser TopDef
 topDef = do
+  whitespace
   t <- typ
   name <- ident
   args <- parens (commaSep typVar)
