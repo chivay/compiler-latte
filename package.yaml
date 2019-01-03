@@ -18,6 +18,7 @@ dependencies:
 - mtl
 - base >= 4.7 && < 5
 - text
+- containers
 name: compiler-latte
 version: 0.1.0.0
 extra-source-files:
