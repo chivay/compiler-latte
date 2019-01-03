@@ -5,12 +5,15 @@ module Compiler where
 import           Abs                  as AST
 import           Control.Monad.Except
 import           Control.Monad.State
+import           Control.Monad.Reader
 import qualified Data.Map             as M
 import qualified Data.Text            as T
 
 data CompileError
   = TypeError T.Text
   | RedefinitionError
+  | UndefinedVariableError
+  | InvalidTypeError
   deriving (Show)
 
 type CompilerM = ExceptT CompileError (StateT CompilerState IO)
@@ -23,13 +26,15 @@ data CompilerState = CompilerState
   } deriving (Eq, Show)
 
 
+type TypecheckM = ReaderT TypecheckEnv (Except CompileError)
+
 type ScopeLevel = Integer
 
 data TypecheckEnv = TypecheckEnv
-  {
-  , _topDefs :: M.Map Ident Type
-  , _vars :: M.Map Ident (Type, ScopeLevel)
+  { _funcDefs     :: M.Map Ident Type
+  , _vars         :: M.Map Ident (Type, ScopeLevel)
   , _currentScope :: ScopeLevel
+  , _returnType   :: Type
   } deriving (Eq, Show)
 
 removeIdents :: [AST.TypVar] -> [AST.Type]
@@ -55,11 +60,53 @@ loadTopDefinitions = do
 checkFunctions :: CompilerM ()
 checkFunctions = do
   (AST.Program tds) <- gets _ast
-  forM_ tds checkFunction
-  return ()
-  where checkFunction td = do
-          run
-          return ()
+  forM_ tds checkDef
+  where checkDef :: AST.TopDef -> CompilerM ()
+        checkDef (AST.TopDef rtype fname args body) = do
+          tds <- gets _topDefs
+          let initVars = M.fromList (fmap (\(TypVar typ name) -> (name,(typ,0))) args)
+          let initialEnv = TypecheckEnv { _funcDefs = tds
+                                        , _vars = initVars
+                                        , _currentScope = 0
+                                        , _returnType = rtype}
+          case runExcept (runReaderT (forM_ body checkStmt) initialEnv) of
+            (Left e) -> throwError e
+            _ -> return ()
+          where checkStmt :: AST.Stmt -> TypecheckM ()
+                checkStmt Empty = ok
+                checkStmt (Block stmts) = local newScope (forM_ stmts checkStmt)
+                checkStmt (Decl typ items) = ok -- TODO
+                checkStmt (Ass var expr) = ok -- TODO
+                checkStmt (Incr var) = do
+                    (typ, _) <- getVar var
+                    if typ == AST.TInteger
+                       then ok
+                       else throwError InvalidTypeError
+                checkStmt (Decr var) = do
+                    (typ, _) <- getVar var
+                    when (typ /= AST.TInteger) (throwError InvalidTypeError)
+                checkStmt (Ret Nothing) = do
+                    rtyp <- asks _returnType
+                    when (rtyp /= AST.TVoid) (throwError InvalidTypeError)
+                checkStmt (Ret (Just expr)) = ok -- TODO
+                checkStmt (If expr stmt) = ok -- TODO
+                checkStmt (IfElse expr stmt stmt') = ok -- TODO
+                checkStmt (Loop expr stmt) = ok -- TODO
+                checkStmt (ExpS expr) = ok -- TODO
+
+
+                newScope :: TypecheckEnv -> TypecheckEnv
+                newScope env = env { _currentScope = _currentScope env + 1 }
+
+                getVar :: Ident -> TypecheckM (Type, ScopeLevel)
+                getVar var = do
+                    vars <- asks _vars
+                    case M.lookup var vars of
+                      Just v -> return v
+                      Nothing -> throwError UndefinedVariableError
+                ok = return ()
+
+
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
