@@ -83,7 +83,7 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
     typInteger = reserved "int" >> return TInteger
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
-    typVoid = reserved "void" >> return TBool
+    typVoid = reserved "void" >> return TVoid
 
 stmt :: Parser Stmt
 stmt =
