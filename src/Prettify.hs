@@ -63,7 +63,7 @@ instance Pretty Stmt where
   pPrint (Block stmts) =
     blockPack Text.PrettyPrint.empty ((indent . vcat) (pPrint <$> stmts))
   pPrint (Decl typ items) =
-    pPrint typ <+> (hsep $ punctuate comma (pPrint <$> items)) <> semi
+    pPrint typ <+> hsep (punctuate comma (pPrint <$> items)) <> semi
   pPrint (Ass ident exp) = pPrint ident <+> char '=' <+> pPrint exp <> semi
   pPrint (ExpS exp) = pPrint exp <> semi
   pPrint (Loop exp (Block stmts)) =

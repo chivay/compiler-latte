@@ -88,7 +88,7 @@ typ = typInteger <|> typString <|> typBool <|> typVoid
 stmt :: Parser Stmt
 stmt =
   whitespace >>
-  (blockStmt <|> (try ifElseStmt) <|> ifStmt <|> whileStmt <|> returnStmt <|>
+  (blockStmt <|> try ifElseStmt <|> ifStmt <|> whileStmt <|> returnStmt <|>
    exprStmt <|>
    assStmt <|>
    declStmt <|>
@@ -196,7 +196,7 @@ assStmt = do
   Ass var <$> expr
 
 varDecl :: Parser DeclItem
-varDecl = (try withInit) <|> noInit
+varDecl = try withInit <|> noInit
   where
     withInit = do
       name <- ident
