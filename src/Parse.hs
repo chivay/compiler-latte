@@ -158,9 +158,9 @@ expr = buildExpressionParser operators terms
     terms =
       parens expr <|> try functionCall <|> fmap LitInt integer <|>
       fmap (LitString . T.pack) stringLiteral <|>
-      fmap Var ident <|>
       (reserved "true" >> return LitTrue) <|>
-      (reserved "false" >> return LitFalse)
+      (reserved "false" >> return LitFalse) <|>
+      fmap Var ident
     functionCall = do
       name <- ident
       args <- parens (commaSep expr)
