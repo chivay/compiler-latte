@@ -11,12 +11,15 @@ import           Control.Applicative
 import           Data.Monoid
 import qualified Data.Map             as M
 import qualified Data.Text            as T
+import           System.Exit
 
 data CompileError
   = TypeError T.Text
   | RedefinitionError
+  | UndefinedFunctionError AST.Ident
   | UndefinedVariableError AST.Ident
   | InvalidTypeError
+  | ReturnPathError
   deriving (Show)
 
 
@@ -82,7 +85,7 @@ checkFunctions = do
           where
                 runInEnv a e = local (const e) a
                 checkAll :: TypecheckEnv -> [AST.Stmt] -> TypecheckM TypecheckEnv
-                checkAll env stmts = (foldl (>=>) (const $ return env) (fmap (runInEnv.checkStmt) stmts)) env
+                checkAll env stmts = (foldl (>=>) (const $ return env) ((runInEnv.checkStmt) <$> stmts)) env
                 checkStmt :: AST.Stmt -> TypecheckM TypecheckEnv
                 checkStmt (Block stmts) = do
                     env <- ask
@@ -168,7 +171,6 @@ checkFunctions = do
                       Just (TFunc rt ats) -> do
                           when (params /= ats) $ throwError InvalidTypeError
                           return rt
-                      Just _ -> undefined
                       Nothing -> throwError $ UndefinedVariableError fname
                 checkExpr (LitString _) = return AST.TString
                 checkExpr (Neg expr) = do
@@ -179,23 +181,24 @@ checkFunctions = do
                     t <- checkExpr expr
                     when (t /= AST.TBool) $ throwError InvalidTypeError
                     return AST.TBool
-                checkExpr (Mul _ exp exp') = checkBinOp AST.TInteger AST.TInteger exp exp'
+                checkExpr (Mul _ exp exp') = checkBinOp AST.TInteger [AST.TInteger] exp exp'
                 checkExpr (Add AST.Plus exp exp') = do
                     t <- checkExpr exp
                     t' <- checkExpr exp'
                     when (t /= t') $ throwError InvalidTypeError
                     unless (elem t [AST.TInteger, AST.TString]) $ throwError InvalidTypeError
                     return t
-                checkExpr (Add _ exp exp') = checkBinOp AST.TInteger AST.TInteger exp exp'
-                checkExpr (Comp _ exp exp') = checkBinOp AST.TBool AST.TInteger exp exp'
-                checkExpr (And exp exp') = checkBinOp AST.TBool AST.TBool exp exp'
-                checkExpr (Or exp exp') = checkBinOp AST.TBool AST.TBool exp exp'
+                checkExpr (Add _ exp exp') = checkBinOp AST.TInteger [AST.TInteger] exp exp'
+                checkExpr (Comp _ exp exp') = checkBinOp AST.TBool [AST.TInteger, AST.TBool] exp exp'
+                checkExpr (And exp exp') = checkBinOp AST.TBool [AST.TBool] exp exp'
+                checkExpr (Or exp exp') = checkBinOp AST.TBool [AST.TBool] exp exp'
 
-                checkBinOp :: AST.Type -> AST.Type -> AST.Expr -> AST.Expr -> TypecheckM Type
-                checkBinOp rtyp etyp exp exp' = do
+                checkBinOp :: AST.Type -> [AST.Type] -> AST.Expr -> AST.Expr -> TypecheckM Type
+                checkBinOp rtyp etyps exp exp' = do
                     t <- checkExpr exp
                     t' <- checkExpr exp'
-                    when (t /= t' || t /= etyp) $ throwError InvalidTypeError
+                    when (t /= t') $ throwError InvalidTypeError
+                    unless (elem t etyps) $ throwError InvalidTypeError
                     return rtyp
 
 
@@ -217,17 +220,49 @@ checkFunctions = do
                     return env
 
 
+checkMain :: CompilerM ()
+checkMain = do
+    tds <- gets _topDefs
+    case M.lookup "main" tds of
+      Just (TFunc AST.TInteger [] ) -> return ()
+      Just _ -> throwError $ TypeError "wrong main type"
+      Nothing -> throwError $ UndefinedFunctionError "main"
+
+checkReturnPaths :: CompilerM ()
+checkReturnPaths = do
+  (AST.Program tds) <- gets _ast
+  forM_ tds checkReturn
+  where checkReturn :: AST.TopDef -> CompilerM ()
+        checkReturn (TopDef rtype _ _ stmts) = do
+            let (nret, ret) = break willReturn stmts
+            when (rtype /= AST.TVoid) (case ret of
+                  [] -> throwError ReturnPathError
+                  [_] -> return ()
+                  _ -> return ())
+        willReturn :: Stmt -> Bool
+        willReturn (Ret _) = True
+        willReturn (Block stmts) = any willReturn stmts
+        willReturn (If LitTrue stmt) = willReturn stmt
+        willReturn (IfElse LitTrue stmt _) = willReturn stmt
+        willReturn (IfElse LitFalse _ stmt) = willReturn stmt
+        willReturn (IfElse _ stmt stmt') = willReturn stmt && willReturn stmt'
+        willReturn _ = False
+
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
   (e, s) <- runStateT (runExceptT compile) initialState
   case e of
-    Left e -> print e
+    Left e -> do
+        print e
+        exitWith $ ExitFailure 1
     _      -> print s
   where
     compile = do
       loadTopDefinitions
       checkFunctions
+      checkMain
+      checkReturnPaths
     initialState =
       CompilerState
         { _filename = "prog.lat"
