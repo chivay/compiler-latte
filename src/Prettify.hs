@@ -76,27 +76,22 @@ instance Pretty Stmt where
   pPrint (Decr ident) = pPrint ident <> "--"
   pPrint (Ret Nothing) = "return" <> semi
   pPrint (Ret (Just exp)) = "return" <+> pPrint exp <> semi
-
   pPrint (If cond (Block stmts)) =
     blockPack ("if" <+> parens (pPrint cond)) (vcat $ pPrint <$> stmts)
   pPrint (If cond stmt) =
     blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt)
-
   pPrint (IfElse cond (Block stmts) (Block stmts')) =
-    blockPack ("if" <+> parens (pPrint cond)) (vcat $ pPrint <$> stmts)
-    $+$ blockPack ("else") (vcat $ pPrint <$> stmts')
-
+    blockPack ("if" <+> parens (pPrint cond)) (vcat $ pPrint <$> stmts) $+$
+    blockPack ("else") (vcat $ pPrint <$> stmts')
   pPrint (IfElse cond stmt (Block stmts')) =
-    blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt)
-    $+$ blockPack ("else") (vcat $ pPrint <$> stmts')
-
+    blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt) $+$
+    blockPack ("else") (vcat $ pPrint <$> stmts')
   pPrint (IfElse cond (Block stmts) stmt) =
-    blockPack ("if" <+> parens (pPrint cond)) (vcat $ pPrint <$> stmts)
-    $+$ blockPack ("else") (pPrint stmt)
-
+    blockPack ("if" <+> parens (pPrint cond)) (vcat $ pPrint <$> stmts) $+$
+    blockPack ("else") (pPrint stmt)
   pPrint (IfElse cond stmt stmt') =
-    blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt)
-    $+$ blockPack ("else") (pPrint stmt')
+    blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt) $+$
+    blockPack ("else") (pPrint stmt')
 
 instance Pretty Program where
   pPrint (Program tlds) = vcat $ pPrint <$> tlds
