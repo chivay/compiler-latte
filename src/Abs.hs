@@ -64,6 +64,7 @@ data Expr
   | LitString T.Text
   | Neg Expr
   | Not Expr
+
   | Mul MulOp
         Expr
         Expr
