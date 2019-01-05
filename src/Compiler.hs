@@ -96,6 +96,7 @@ checkFunctions = do
                 checkStmt (Decl typ items) = do
                     env <- ask
                     forM_ items checkItemType
+                    when (typ == AST.TVoid) $ throwError InvalidTypeError
                     vars' <- foldM newScopedVar (_vars env) items
                     return $ env {_vars = vars'}
                     where newScopedVar :: VEnv -> DeclItem -> TypecheckM VEnv
