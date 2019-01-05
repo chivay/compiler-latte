@@ -17,6 +17,7 @@ data CompileError
   | InvalidTypeError AST.Ident
   | ReturnPathError
   | StmtLocatedError AST.Stmt CompileError
+  | CodegenError
   deriving (Show)
 
 instance Pretty CompileError where

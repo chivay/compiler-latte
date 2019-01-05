@@ -253,9 +253,19 @@ checkReturnPaths = do
         willReturn (IfElse _ stmt stmt') = willReturn stmt && willReturn stmt'
         willReturn _ = False
 
+compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
+compileFunction td = do
+  case runExcept (runStateT C.generateCode initialState) of
+    (Left e) -> throwError e
+    (Right (func, _)) -> return func
+  where initialState = C.CodegenState { C._ast = td}
+
+
 generateCode :: CompilerM ()
 generateCode = do
-    return ()
+  (AST.Program tds) <- gets _ast
+  funcs <- mapM compileFunction tds
+  return ()
 
 
 compileProgram :: AST.Program -> IO ()
@@ -276,6 +286,7 @@ compileProgram prog = do
       checkMain
       printString "Checking return paths..."
       checkReturnPaths
+      printString "Generating code..."
       generateCode
     printString :: String -> CompilerM ()
     printString = liftIO.putStrLn
