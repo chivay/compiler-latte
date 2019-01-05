@@ -12,17 +12,24 @@ import           Control.Applicative
 import           Data.Monoid
 import qualified Data.Map             as M
 import qualified Data.Text            as T
+import           Prelude                        hiding ((<>))
+import           Text.PrettyPrint
+import           Text.PrettyPrint.HughesPJClass
 import           System.Exit
+import           Prettify
 
 data CompileError
   = TypeError T.Text
   | RedefinitionError
   | UndefinedFunctionError AST.Ident
   | UndefinedVariableError AST.Ident
-  | InvalidTypeError
+  | InvalidTypeError AST.Ident
   | ReturnPathError
+  | StmtLocatedError AST.Stmt CompileError
   deriving (Show)
 
+instance Pretty CompileError where
+  pPrint (StmtLocatedError stmt err) = text (show err) $+$ text "in statement:" $+$ (pPrint stmt)
 
 type CompilerM = ExceptT CompileError (StateT CompilerState IO)
 
@@ -31,7 +38,7 @@ data CompilerState = CompilerState
   , _src      :: T.Text
   , _ast      :: AST.Program
   , _topDefs  :: M.Map Ident Type
-  , _code     :: C.LLVMModule
+  , _code     :: Maybe C.LLVMModule
   } deriving (Eq, Show)
 
 
@@ -73,7 +80,6 @@ checkFunctions = do
   forM_ tds checkDef
   where checkDef :: AST.TopDef -> CompilerM ()
         checkDef (AST.TopDef rtype fname args body) = do
-          liftIO $ (putStrLn . T.unpack) fname
           tds <- gets _topDefs
           let initVars = M.fromList (fmap (\(TypVar typ name) -> (name,(typ,0))) args)
           when (M.size initVars /= length args) $ throwError RedefinitionError
@@ -87,7 +93,13 @@ checkFunctions = do
           where
                 runInEnv a e = local (const e) a
                 checkAll :: TypecheckEnv -> [AST.Stmt] -> TypecheckM TypecheckEnv
-                checkAll env stmts = (foldl (>=>) (const $ return env) ((runInEnv.checkStmt) <$> stmts)) env
+                checkAll env stmts = (foldl (>=>) (const $ return env) ((runInEnv.checkWithErrorLoc) <$> stmts)) env
+
+                checkWithErrorLoc :: AST.Stmt -> TypecheckM TypecheckEnv
+                checkWithErrorLoc stmt = do
+                    (checkStmt stmt) `catchError` (\e -> throwError $ StmtLocatedError stmt e)
+
+
                 checkStmt :: AST.Stmt -> TypecheckM TypecheckEnv
                 checkStmt (Block stmts) = do
                     env <- ask
@@ -96,7 +108,7 @@ checkFunctions = do
                 checkStmt (Decl typ items) = do
                     env <- ask
                     forM_ items checkItemType
-                    when (typ == AST.TVoid) $ throwError InvalidTypeError
+                    when (typ == AST.TVoid) $ throwError $ InvalidTypeError $ "void variable"
                     vars' <- foldM newScopedVar (_vars env) items
                     return $ env {_vars = vars'}
                     where newScopedVar :: VEnv -> DeclItem -> TypecheckM VEnv
@@ -112,45 +124,45 @@ checkFunctions = do
                           checkItemType :: DeclItem -> TypecheckM ()
                           checkItemType (DeclItem _ (Just expr)) = do
                             et <- checkExpr expr
-                            when (et /= typ) $ throwError InvalidTypeError
+                            when (et /= typ) $ throwError $ InvalidTypeError "conflicting expression and variable type"
                           checkItemType (DeclItem _ _ ) = return () -- default initialized
                 checkStmt (Ass var expr) = do
                     (typ, _) <- getVar var
                     typ' <- checkExpr expr
-                    when (typ /= typ') $ throwError InvalidTypeError
+                    when (typ /= typ') $ throwError $ InvalidTypeError "assignment to wrong type"
                     id
                 checkStmt (Incr var) = do
                     (typ, _) <- getVar var
-                    when (typ /= AST.TInteger) (throwError InvalidTypeError)
+                    when (typ /= AST.TInteger) (throwError $ InvalidTypeError "not an integer")
                     id
                 checkStmt (Decr var) = do
                     (typ, _) <- getVar var
-                    when (typ /= AST.TInteger) (throwError InvalidTypeError)
+                    when (typ /= AST.TInteger) (throwError $ InvalidTypeError "not an integer")
                     id
                 checkStmt (Ret Nothing) = do
                     rtyp <- asks _returnType
-                    when (rtyp /= AST.TVoid) (throwError InvalidTypeError)
+                    when (rtyp /= AST.TVoid) (throwError $ InvalidTypeError "cannot return void")
                     id
                 checkStmt Empty = id
                 checkStmt (Ret (Just expr)) = do
                     rtype <- asks _returnType
                     etype <- checkExpr expr
-                    when (rtype /= etype) (throwError InvalidTypeError)
+                    when (rtype /= etype) (throwError $ InvalidTypeError "unexpected type")
                     id
                 checkStmt (If expr stmt) = do
                     etype <- checkExpr expr
-                    when (etype /= AST.TBool) (throwError InvalidTypeError)
+                    when (etype /= AST.TBool) (throwError $ InvalidTypeError "not a bool")
                     checkStmt stmt
                     id
                 checkStmt (IfElse expr stmt stmt') = do
                     etype <- checkExpr expr
-                    when (etype /= AST.TBool) (throwError InvalidTypeError)
+                    when (etype /= AST.TBool) (throwError $ InvalidTypeError "not a bool")
                     checkStmt stmt
                     checkStmt stmt'
                     id
                 checkStmt (Loop expr stmt) = do
                     etype <- checkExpr expr
-                    when (etype /= AST.TBool) (throwError InvalidTypeError)
+                    when (etype /= AST.TBool) (throwError $ InvalidTypeError "not a bool")
                     checkStmt stmt
                     id
                 checkStmt (ExpS expr) = do
@@ -172,24 +184,24 @@ checkFunctions = do
                     params <- mapM checkExpr exprs
                     case M.lookup fname fenv of
                       Just (TFunc rt ats) -> do
-                          when (params /= ats) $ throwError InvalidTypeError
+                          when (params /= ats) $ throwError $ InvalidTypeError "invalid call"
                           return rt
                       Nothing -> throwError $ UndefinedVariableError fname
                 checkExpr (LitString _) = return AST.TString
                 checkExpr (Neg expr) = do
                     t <- checkExpr expr
-                    when (t /= AST.TInteger) $ throwError InvalidTypeError
+                    when (t /= AST.TInteger) $ throwError $ InvalidTypeError "not an integer"
                     return AST.TInteger
                 checkExpr (Not expr) = do
                     t <- checkExpr expr
-                    when (t /= AST.TBool) $ throwError InvalidTypeError
+                    when (t /= AST.TBool) $ throwError $ InvalidTypeError "not a bool"
                     return AST.TBool
                 checkExpr (Mul _ exp exp') = checkBinOp AST.TInteger [AST.TInteger] exp exp'
                 checkExpr (Add AST.Plus exp exp') = do
                     t <- checkExpr exp
                     t' <- checkExpr exp'
-                    when (t /= t') $ throwError InvalidTypeError
-                    unless (elem t [AST.TInteger, AST.TString]) $ throwError InvalidTypeError
+                    when (t /= t') $ throwError $ InvalidTypeError "types not matching"
+                    unless (elem t [AST.TInteger, AST.TString]) $ throwError $ InvalidTypeError "no plus operator"
                     return t
                 checkExpr (Add _ exp exp') = checkBinOp AST.TInteger [AST.TInteger] exp exp'
                 checkExpr (Comp _ exp exp') = checkBinOp AST.TBool [AST.TInteger, AST.TBool] exp exp'
@@ -200,8 +212,8 @@ checkFunctions = do
                 checkBinOp rtyp etyps exp exp' = do
                     t <- checkExpr exp
                     t' <- checkExpr exp'
-                    when (t /= t') $ throwError InvalidTypeError
-                    unless (elem t etyps) $ throwError InvalidTypeError
+                    when (t /= t') $ throwError $ InvalidTypeError "conflicting types"
+                    unless (elem t etyps) $ throwError $ InvalidTypeError "not supported"
                     return rtyp
 
 
@@ -244,6 +256,7 @@ checkReturnPaths = do
                   _ -> return ())
         willReturn :: Stmt -> Bool
         willReturn (Ret _) = True
+        willReturn (ExpS (Call "error" _)) = True
         willReturn (Block stmts) = any willReturn stmts
         willReturn (If LitTrue stmt) = willReturn stmt
         willReturn (IfElse LitTrue stmt _) = willReturn stmt
@@ -261,7 +274,7 @@ compileProgram prog = do
   (e, s) <- runStateT (runExceptT compile) initialState
   case e of
     Left e -> do
-        print e
+        (print.pPrint) e
         exitWith $ ExitFailure 1
     _      -> print s
   where
@@ -277,6 +290,7 @@ compileProgram prog = do
         , _src = "somethin"
         , _ast = prog
         , _topDefs = initialDefinitions
+        , _code = Nothing
         }
     initialDefinitions =
       M.fromList
