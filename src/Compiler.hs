@@ -17,19 +17,8 @@ import           Text.PrettyPrint
 import           Text.PrettyPrint.HughesPJClass
 import           System.Exit
 import           Prettify
+import           Err
 
-data CompileError
-  = TypeError T.Text
-  | RedefinitionError
-  | UndefinedFunctionError AST.Ident
-  | UndefinedVariableError AST.Ident
-  | InvalidTypeError AST.Ident
-  | ReturnPathError
-  | StmtLocatedError AST.Stmt CompileError
-  deriving (Show)
-
-instance Pretty CompileError where
-  pPrint (StmtLocatedError stmt err) = text (show err) $+$ text "in statement:" $+$ (pPrint stmt)
 
 type CompilerM = ExceptT CompileError (StateT CompilerState IO)
 
@@ -68,7 +57,7 @@ loadTopDefinitions = do
     addDef (TopDef rtype ident args _) = do
       tds <- gets _topDefs
       if M.member ident tds
-        then throwError RedefinitionError
+        then throwError (FunctionRedefinitionError ident)
         else modify insertFunc
       where
         ftype = AST.TFunc rtype (removeIdents args)
@@ -279,11 +268,17 @@ compileProgram prog = do
     _      -> print s
   where
     compile = do
+      printString "Loading functions definitions..."
       loadTopDefinitions
+      printString "Typechecking functions..."
       checkFunctions
+      printString "Typechecking main..."
       checkMain
+      printString "Checking return paths..."
       checkReturnPaths
       generateCode
+    printString :: String -> CompilerM ()
+    printString = liftIO.putStrLn
     initialState =
       CompilerState
         { _filename = "prog.lat"
