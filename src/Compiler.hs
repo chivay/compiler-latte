@@ -255,10 +255,14 @@ checkReturnPaths = do
 
 compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
 compileFunction td = do
-  case runExcept (runStateT C.generateCode initialState) of
+  case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
     (Right (func, _)) -> return func
-  where initialState = C.CodegenState { C._ast = td}
+    where initialEnv = C.CodegenEnv {}
+          initialState = C.CodegenState { C._ast = td
+                                      , C._nextLabel = 0
+                                      , C._nextIdent = 0
+                                      }
 
 
 generateCode :: CompilerM ()
