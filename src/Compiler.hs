@@ -4,6 +4,7 @@
 module Compiler where
 
 import           Abs                  as AST
+import qualified Codegen              as C
 import           Control.Monad.Except
 import           Control.Monad.State
 import           Control.Monad.Reader
@@ -30,6 +31,7 @@ data CompilerState = CompilerState
   , _src      :: T.Text
   , _ast      :: AST.Program
   , _topDefs  :: M.Map Ident Type
+  , _code     :: C.LLVMModule
   } deriving (Eq, Show)
 
 
@@ -248,6 +250,10 @@ checkReturnPaths = do
         willReturn (IfElse _ stmt stmt') = willReturn stmt && willReturn stmt'
         willReturn _ = False
 
+generateCode :: CompilerM ()
+generateCode = do
+    return ()
+
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
@@ -263,6 +269,7 @@ compileProgram prog = do
       checkFunctions
       checkMain
       checkReturnPaths
+      generateCode
     initialState =
       CompilerState
         { _filename = "prog.lat"
