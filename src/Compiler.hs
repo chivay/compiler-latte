@@ -257,11 +257,21 @@ compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
 compileFunction td = do
   case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
-    (Right (func, _)) -> return func
-    where initialEnv = C.CodegenEnv {}
+    (Right (func, s)) -> do
+        let blocks = C._blocks s
+        mapM_ (\insns -> let block = C.LLVMBlock {
+                        C._label = C.LLVMLabel "x"
+                      , C._insns = reverse insns
+                      , C._terminator = C.Br (C.LLVMLabel "chujwie") } in (liftIO.print.pPrint) block) blocks
+        return func
+    where initialEnv = C.CodegenEnv { C._varMap = M.empty
+                                    , C._currentBlock = C.LLVMLabel "entry"
+                                    }
           initialState = C.CodegenState { C._ast = td
-                                      , C._nextLabel = 0
-                                      , C._nextIdent = 0
+                                        , C._nextLabel = 0
+                                        , C._nextIdent = 0
+                                        , C._blocks = M.fromList [(C.LLVMLabel "entry", [])]
+                                        , C._localVars = []
                                       }
 
 

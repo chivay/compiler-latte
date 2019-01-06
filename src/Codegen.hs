@@ -143,6 +143,12 @@ data CodegenEnv = CodegenEnv
 
 type CodegenM =  ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
 
+newBlock :: CodegenM LLVMLabel
+newBlock = do
+    l <- newLabel
+    modify (\s -> s {_blocks = M.insert l [] (_blocks s)})
+    return l
+
 
 newLabel :: CodegenM LLVMLabel
 newLabel = do
@@ -178,6 +184,12 @@ allocBool :: Bool -> CodegenM LLVMValue
 allocBool v = return (LLVMConst I1 n)
     where n = if v then 1 else 0
 
+allocLocalVar :: LLVMType -> CodegenM LLVMValue
+allocLocalVar t = do
+    r <- allocReg (Ptr t)
+    modify (\s -> let newVars = r:(_localVars s) in s {_localVars = newVars})
+    return r
+
 emit :: LLVMIR -> CodegenM ()
 emit ins = do
     block <- asks _currentBlock
@@ -208,36 +220,50 @@ compileExpr (AST.Call ident exprs) = do
     emit $ Call output (LLVMFuncIdent ident) res -- TODO
     return output
 
-buildBlock :: [AST.Stmt] -> CodegenM ([AST.Stmt], [AST.Stmt])
-buildBlock stmts = do
-    let blockStmts = takeWhile (not . blockEnds) stmts
-    let rest = dropWhile (not . blockEnds) stmts
-    return (blockStmts, rest)
-    where blockEnds :: AST.Stmt -> Bool
-          blockEnds AST.Empty = False
-          blockEnds (AST.Decl _ _ ) = False
-          blockEnds (AST.Ass _ _ ) = False
-          blockEnds (AST.Incr _) = False
-          blockEnds (AST.Decr _) = False
-          blockEnds (AST.ExpS _ ) = False
-          blockEnds _ = True
 
-compileStmt :: AST.Stmt -> CodegenM [LLVMIR]
-compileStmt AST.Empty = undefined
+compileStmt :: AST.Stmt -> CodegenM CodegenEnv
+compileStmt AST.Empty = nop
+compileStmt (AST.Ass vname expr) = do
+    addr <- getAddr vname
+    r <- compileExpr expr
+    emit $ Store r addr
+    nop
+compileStmt (AST.Decl typ items) = do
+    let t = (M.!) llvmTypeMap typ
+    locs <- mapM allocLocalVar (replicate (length items) t)
+    let items' = (\(AST.DeclItem ident mexp) -> (ident, mexp)) <$> items
+    let idents = fst <$> items'
+    -- TODO initialize
+    env <- ask
+    let newVars = M.fromList (zip idents locs)
+    return $ env { _varMap = (M.union newVars (_varMap env)) }
+    where llvmTypeMap = M.fromList [ (AST.TInteger, I32)
+                                   , (AST.TBool, I1)
+                                   , (AST.TVoid, Void) ]
+compileStmt (AST.Ret Nothing) = do { emit $ Ret Nothing; nop }
+compileStmt (AST.Ret (Just exp)) = do
+    r <- compileExpr exp
+    emit $ Ret (Just r)
+    nop
 
-compileBlock :: [AST.Stmt] -> CodegenM LLVMBlock
-compileBlock stmts = undefined
+nop :: CodegenM CodegenEnv
+nop = do {env <- ask; return env}
+
+compileStatements :: [AST.Stmt] -> CodegenM ()
+compileStatements stmts = do { compileAll stmts; return (); }
+  where runInEnv a e = local (const e) a
+        compileAll :: [AST.Stmt] -> CodegenM CodegenEnv
+        compileAll (s:ss) = do
+            env <- compileStmt s
+            local (const env) (compileAll ss)
+        compileAll [] = nop
 
 
-compileBlocks :: [AST.Stmt] -> CodegenM LLVMLabel
-compileBlocks stmts = do
-    (current, others) <- buildBlock stmts
-    this <- compileBlock current
-    next <- compileBlocks others
-    return (_label this)
+
+
 
 generateCode :: CodegenM LLVMFunction
 generateCode = do
     (AST.TopDef _ _ _ stmts) <- gets _ast
-    entry <- compileBlocks stmts
+    entry <- compileStatements stmts
     return (LLVMFunction {})

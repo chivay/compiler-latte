@@ -11,7 +11,7 @@ data Type
   | TVoid
   | TFunc Type
           [Type]
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
 
 data TypVar =
   TypVar Type
