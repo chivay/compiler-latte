@@ -259,10 +259,10 @@ compileFunction td = do
     (Left e) -> throwError e
     (Right (func, s)) -> do
         let blocks = C._blocks s
-        mapM_ (\insns -> let block = C.LLVMBlock {
-                        C._label = C.LLVMLabel "x"
+        mapM_ (\(lab, insns) -> let block = C.LLVMBlock {
+                        C._label = lab
                       , C._insns = reverse insns
-                      , C._terminator = C.Br (C.LLVMLabel "chujwie") } in (liftIO.print.pPrint) block) blocks
+                      } in (liftIO.print.pPrint) block) (M.toList blocks)
         return func
     where initialEnv = C.CodegenEnv { C._varMap = M.empty
                                     , C._currentBlock = C.LLVMLabel "entry"

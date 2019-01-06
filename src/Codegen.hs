@@ -10,6 +10,7 @@ import           Control.Monad.State
 import           Control.Monad.Reader
 import           Text.PrettyPrint
 import           Text.PrettyPrint.HughesPJClass
+import           Data.Maybe
 import           Err
 
 newtype LLVMLabel = LLVMLabel T.Text deriving (Show, Eq, Ord)
@@ -57,7 +58,35 @@ data LLVMIR = Ret (Maybe LLVMValue)
             | Store LLVMValue LLVMValue
             | Load LLVMValue LLVMValue
             | Call LLVMValue LLVMFuncIdent [LLVMValue]
+            | ICmp CmpOp LLVMValue LLVMValue LLVMValue
+            | And LLVMValue LLVMValue LLVMValue
+            | Or LLVMValue LLVMValue LLVMValue
+            | Xor LLVMValue LLVMValue LLVMValue
             deriving (Show, Eq)
+
+data CmpOp = Eq
+           | Ne
+           | Ugt
+           | Uge
+           | Ult
+           | Ule
+           | Sgt
+           | Sge
+           | Sle
+           | Slt
+           deriving (Show, Eq)
+
+instance Pretty CmpOp where
+    pPrint Eq  = text "eq"
+    pPrint Ne  = text "ne"
+    pPrint Ugt = text "ugt"
+    pPrint Uge = text "uge"
+    pPrint Ult = text "ult"
+    pPrint Ule = text "ule"
+    pPrint Sgt = text "sgt"
+    pPrint Sge = text "sge"
+    pPrint Sle = text "sle"
+    pPrint Slt = text "slt"
 
 getType :: LLVMValue -> LLVMType
 getType (LLVMConst t _) = t
@@ -80,11 +109,17 @@ instance Pretty LLVMIR where
                                  <+> text "label" <+> (pPrint.labelAsIdent) label'
     pPrint (Add r v v') = binOp "add" r v v'
     pPrint (Sub r v v') = binOp "sub" r v v'
-    pPrint (Mul r v v') = binOp "mul" r v v'
     pPrint (SDiv r v v') = binOp "sdiv" r v v'
     pPrint (SRem r v v') = binOp "srem" r v v'
     pPrint (Store v vp) = text "store" <+> printWithType v <> char ',' <+> printWithType vp
-    pPrint (Load r vp) = pPrint r <+> char '=' <+> text "load" <+> printType r <> char ',' <+> printWithType vp
+    pPrint (Load r vp) = pPrint r <+> char '=' <+> text "load" <+>
+                         printType r <> char ',' <+> printWithType vp
+    pPrint (ICmp op r c c') = pPrint r <+> char '=' <+> text "icmp" <+> pPrint op <+>
+                              printWithType c <> char ',' <+> pPrint c'
+    pPrint (And r v v') = binOp "and" r v v'
+    pPrint (Or r v v') = binOp "or" r v v'
+    pPrint (Xor r v v') = binOp "xor" r v v'
+
 
 printType :: LLVMValue -> Doc
 printType = pPrint.getType
@@ -93,17 +128,16 @@ printWithType :: LLVMValue -> Doc
 printWithType v = printType v <+> pPrint v
 
 binOp :: String -> LLVMValue -> LLVMValue -> LLVMValue -> Doc
-binOp s r v v' = pPrint r <+> char '=' <+> printType r <+> pPrint v <> char ',' <+> pPrint v'
+binOp s r v v' = pPrint r <+> char '=' <+> text s <+> printType r <+> pPrint v <> char ',' <+> pPrint v'
 
 data LLVMBlock = LLVMBlock
                 { _label :: LLVMLabel
                 , _insns :: [LLVMIR]
-                , _terminator :: LLVMIR
                 } deriving (Show, Eq)
 
 instance Pretty LLVMBlock where
     pPrint block = pPrint (_label block) <> char ':' $+$
-                   (indent . vcat) (pPrint <$> (_insns block ++ [_terminator block]))
+                   (indent . vcat) (pPrint <$> (_insns block))
         where indent = nest 4
 
 
@@ -148,7 +182,6 @@ newBlock = do
     l <- newLabel
     modify (\s -> s {_blocks = M.insert l [] (_blocks s)})
     return l
-
 
 newLabel :: CodegenM LLVMLabel
 newLabel = do
@@ -219,7 +252,27 @@ compileExpr (AST.Call ident exprs) = do
     output <- allocReg I32
     emit $ Call output (LLVMFuncIdent ident) res -- TODO
     return output
+compileExpr (AST.Neg exp) = compileExpr (AST.Add AST.Minus (AST.LitInt 0) exp)
+compileExpr (AST.Not exp) = do
+    e <- compileExpr exp
+    r <- allocReg I1
+    c <- allocConst 1
+    emit $ Xor r e c
+    return r
+compileExpr (AST.Mul op exp exp') = undefined
+compileExpr (AST.Add op exp exp') = do
+    e  <- compileExpr exp
+    e' <- compileExpr exp'
+    r  <- allocReg (getType e)
+    case op of
+      AST.Plus -> do { emit $ Add r e e'; return r }
+      AST.Minus -> do { emit $ Sub r e e'; return r }
+compileExpr (AST.Comp rop exp exp') = undefined
+compileExpr (AST.And exp exp') = undefined
+compileExpr (AST.Or exp exp') = undefined
 
+store :: LLVMValue -> LLVMValue -> CodegenM ()
+store val addr = emit $ Store val addr
 
 compileStmt :: AST.Stmt -> CodegenM CodegenEnv
 compileStmt AST.Empty = nop
@@ -233,7 +286,9 @@ compileStmt (AST.Decl typ items) = do
     locs <- mapM allocLocalVar (replicate (length items) t)
     let items' = (\(AST.DeclItem ident mexp) -> (ident, mexp)) <$> items
     let idents = fst <$> items'
-    -- TODO initialize
+    let mexprs = (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
+    results <- mapM compileExpr mexprs
+    mapM_ (\(val,addr) -> store val addr) (zip results locs)
     env <- ask
     let newVars = M.fromList (zip idents locs)
     return $ env { _varMap = (M.union newVars (_varMap env)) }
@@ -245,12 +300,51 @@ compileStmt (AST.Ret (Just exp)) = do
     r <- compileExpr exp
     emit $ Ret (Just r)
     nop
+compileStmt (AST.Loop exp stmt) = do
+    condBlock <- newBlock
+    bodyBlock <- newBlock
+    postBlock <- newBlock
+    emit $ Br condBlock
+    local (setCurrentBlock condBlock) (do
+        r <- compileExpr exp
+        emit $ BrCond r bodyBlock postBlock
+        )
+    local (setCurrentBlock bodyBlock) (do
+        env' <- compileStmt stmt
+        let lastBlock = _currentBlock env'
+        local (setCurrentBlock lastBlock) (emit $ Br condBlock)
+        )
+    env <- ask
+    return (setCurrentBlock postBlock env)
+compileStmt (AST.Block stmts) = do
+    env <- ask
+    env' <- compileStatements stmts
+    let lastBlock = _currentBlock env'
+    return (setCurrentBlock lastBlock env)
+compileStmt (AST.Incr var) = compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Var var) (AST.LitInt 1)))
+compileStmt (AST.Decr var) = compileStmt (AST.Ass var (AST.Add AST.Minus (AST.Var var) (AST.LitInt 1)))
+compileStmt (AST.If exp stmt) = do
+    bodyBlock <- newBlock
+    postBlock <- newBlock
+    r <- compileExpr exp
+    emit $ BrCond r bodyBlock postBlock
+    local (setCurrentBlock bodyBlock) (do
+        env' <- compileStmt stmt
+        let lastBlock = _currentBlock env'
+        local (setCurrentBlock lastBlock) (emit $ Br postBlock)
+        )
+    env <- ask
+    return (setCurrentBlock postBlock env)
+
+
+setCurrentBlock :: LLVMLabel -> CodegenEnv -> CodegenEnv
+setCurrentBlock l env = env {_currentBlock = l}
 
 nop :: CodegenM CodegenEnv
 nop = do {env <- ask; return env}
 
-compileStatements :: [AST.Stmt] -> CodegenM ()
-compileStatements stmts = do { compileAll stmts; return (); }
+compileStatements :: [AST.Stmt] -> CodegenM CodegenEnv
+compileStatements stmts = compileAll stmts
   where runInEnv a e = local (const e) a
         compileAll :: [AST.Stmt] -> CodegenM CodegenEnv
         compileAll (s:ss) = do
