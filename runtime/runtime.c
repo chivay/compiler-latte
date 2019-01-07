@@ -8,10 +8,7 @@
 
 struct __string {
     size_t length;
-    union {
-        uint8_t *buf;
-        uint8_t c[8];
-    };
+    uint8_t *buf;
     uint32_t refcnt;
 };
 
@@ -27,20 +24,14 @@ void __init_string(struct __string *str, uint8_t *buf, size_t length, bool move_
     str->refcnt = 1;
     str->length = length;
 
-    // small string optimization
-    if (length <= sizeof(str->c)) {
-        memcpy(str->c, buf, length);
-        return;
-    }
-    uint8_t *bufptr;
     if (move_buffer) {
-        bufptr = buf;
+        str->buf = buf;
     } else {
-        bufptr = calloc(length, sizeof(uint8_t));
+        str->buf = calloc(length, sizeof(uint8_t));
+        memcpy(str->buf, buf, length);
     }
-    if (bufptr == NULL)
+    if (str->buf == NULL)
         __panic("Out of memory!");
-    memcpy(bufptr, buf, length);
 }
 
 
@@ -54,9 +45,7 @@ struct __string *__alloc_string(void)
 
 void __destroy_string(struct __string* str)
 {
-    if (str->length > sizeof(str->c)) {
-        free(str->buf);
-    }
+    free(str->buf);
     free(str);
 }
 
@@ -76,9 +65,6 @@ void __dec_ref_string(struct __string *str)
 
 uint8_t* __get_buf_string(struct __string *str)
 {
-    if (str->length <= sizeof(str->c)) {
-        return str->c;
-    }
     return str->buf;
 }
 
