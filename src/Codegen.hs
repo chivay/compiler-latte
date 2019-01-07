@@ -119,6 +119,7 @@ instance Pretty LLVMIR where
     pPrint (And r v v') = binOp "and" r v v'
     pPrint (Or r v v') = binOp "or" r v v'
     pPrint (Xor r v v') = binOp "xor" r v v'
+    pPrint (Call r func args) = pPrint r <+> char '=' <+> text "call" <+> pPrint func
 
 
 printType :: LLVMValue -> Doc
@@ -259,7 +260,14 @@ compileExpr (AST.Not exp) = do
     c <- allocConst 1
     emit $ Xor r e c
     return r
-compileExpr (AST.Mul op exp exp') = undefined
+compileExpr (AST.Mul op exp exp') = do
+    e  <- compileExpr exp
+    e' <- compileExpr exp'
+    r  <- allocReg (getType e)
+    case op of
+      AST.Times -> do { emit $ Mul r e e'; return r }
+      AST.Div -> do { emit $ SDiv r e e'; return r }
+      AST.Mod -> do { emit $ SRem r e e'; return r }
 compileExpr (AST.Add op exp exp') = do
     e  <- compileExpr exp
     e' <- compileExpr exp'
@@ -267,9 +275,29 @@ compileExpr (AST.Add op exp exp') = do
     case op of
       AST.Plus -> do { emit $ Add r e e'; return r }
       AST.Minus -> do { emit $ Sub r e e'; return r }
-compileExpr (AST.Comp rop exp exp') = undefined
-compileExpr (AST.And exp exp') = undefined
-compileExpr (AST.Or exp exp') = undefined
+compileExpr (AST.Comp rop exp exp') = do
+    p <- compileExpr exp
+    q <- compileExpr exp'
+    r <- allocReg I1
+    emit $ ICmp ((M.!) opMap rop) r p q
+    return r
+    where opMap = M.fromList [
+            (AST.Less, Slt),
+            (AST.LessEqual, Sle),
+            (AST.Greater, Sgt),
+            (AST.GreaterEqual, Sge),
+            (AST.Equal, Eq),
+            (AST.NEqual, Ne)]
+compileExpr (AST.And exp exp') = compileBinOp (And) exp exp'
+compileExpr (AST.Or exp exp') = compileBinOp (Or) exp exp'
+
+compileBinOp :: (LLVMValue -> LLVMValue -> LLVMValue -> LLVMIR) -> AST.Expr -> AST.Expr -> CodegenM LLVMValue
+compileBinOp opcode exp exp' = do
+    p <- compileExpr exp
+    q <- compileExpr exp'
+    r <- allocReg (getType p)
+    emit $ opcode r p q
+    return r
 
 store :: LLVMValue -> LLVMValue -> CodegenM ()
 store val addr = emit $ Store val addr
@@ -335,6 +363,27 @@ compileStmt (AST.If exp stmt) = do
         )
     env <- ask
     return (setCurrentBlock postBlock env)
+compileStmt (AST.IfElse exp stmt stmt') = do
+    trueBlock <- newBlock
+    falseBlock <- newBlock
+    postBlock <- newBlock
+    r <- compileExpr exp
+    emit $ BrCond r trueBlock falseBlock
+    local (setCurrentBlock trueBlock) (do
+        env' <- compileStmt stmt
+        let lastBlock = _currentBlock env'
+        local (setCurrentBlock lastBlock) (emit $ Br postBlock)
+        )
+    local (setCurrentBlock falseBlock) (do
+        env' <- compileStmt stmt
+        let lastBlock = _currentBlock env'
+        local (setCurrentBlock lastBlock) (emit $ Br postBlock)
+        )
+    env <- ask
+    return (setCurrentBlock postBlock env)
+compileStmt (AST.ExpS exp) = do
+    compileExpr exp
+    nop
 
 
 setCurrentBlock :: LLVMLabel -> CodegenEnv -> CodegenEnv

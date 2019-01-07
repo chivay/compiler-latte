@@ -86,7 +86,7 @@ data RelOp
   | GreaterEqual
   | Equal
   | NEqual
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
 
 data MulOp
   = Times
