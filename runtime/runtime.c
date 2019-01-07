@@ -46,9 +46,10 @@ void __init_string(struct __string *str, uint8_t *buf, size_t length, bool move_
 
 struct __string *__alloc_string(void)
 {
-    void *ptr = malloc(sizeof (struct __string));
+    struct __string *ptr = malloc(sizeof (struct __string));
     if (ptr == NULL)
         __panic("Out of memory!");
+    return ptr;
 }
 
 void __destroy_string(struct __string* str)
