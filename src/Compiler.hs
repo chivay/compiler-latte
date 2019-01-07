@@ -258,19 +258,22 @@ compileFunction td = do
   case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
     (Right (func, s)) -> do
-        let blocks = C._blocks s
-        mapM_ (\(lab, insns) -> let block = C.LLVMBlock {
-                        C._label = lab
-                      , C._insns = reverse insns
-                      } in (liftIO.print.pPrint) block) (M.toList blocks)
+        liftIO $ (print.pPrint) func
+--        let blocks = C._blocks s
+--        mapM_ (\(lab, insns) -> let block = C.LLVMBlock {
+--                        C._label = lab
+--                      , C._insns = reverse insns
+--                      } in (liftIO.print.pPrint) block) (M.toList blocks)
         return func
     where initialEnv = C.CodegenEnv { C._varMap = M.empty
-                                    , C._currentBlock = C.LLVMLabel "entry"
+                                    , C._currentBlock = C.LLVMLabel "?"
                                     }
           initialState = C.CodegenState { C._ast = td
                                         , C._nextLabel = 0
                                         , C._nextIdent = 0
-                                        , C._blocks = M.fromList [(C.LLVMLabel "entry", [])]
+                                        , C._nextGlobal = 0
+                                        , C._initBlock = []
+                                        , C._blocks = M.empty
                                         , C._localVars = []
                                       }
 
@@ -281,7 +284,6 @@ generateCode = do
   funcs <- mapM compileFunction tds
   return ()
 
-
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
   (e, s) <- runStateT (runExceptT compile) initialState
@@ -289,7 +291,7 @@ compileProgram prog = do
     Left e -> do
         (print.pPrint) e
         exitWith $ ExitFailure 1
-    _      -> print s
+    _      -> return ()
   where
     compile = do
       printString "Loading functions definitions..."

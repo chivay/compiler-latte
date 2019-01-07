@@ -6,13 +6,13 @@ import qualified Abs                            as AST
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
+import qualified Data.ByteString                as B
 import qualified Data.Map                       as M
 import           Data.Maybe
 import qualified Data.Text                      as T
 import qualified Data.Text.Encoding             as E
-import qualified Data.ByteString                as B
 import           Err
-import           Numeric (showHex)
+import           Numeric                        (showHex)
 import           Prelude                        hiding ((<>))
 import           Text.PrettyPrint
 import           Text.PrettyPrint.HughesPJClass
@@ -46,22 +46,24 @@ data LLVMType
   | Void
   | Ptr LLVMType
   | String
-  | Array Integer LLVMType
+  | Array Integer
+          LLVMType
   deriving (Show, Eq)
 
 latteString :: LLVMType
 latteString = Ptr String
 
--- @.str = private unnamed_addr constant [21 x i8] c"Unrecoverable error:\00", align 1
--- @.str.1 = private unnamed_addr constant [15 x i8] c"Out of memory!\00", align 1
--- @.str.2 = private unnamed_addr constant [28 x i8] c"Reference counter overflow!\00", align 1
--- @.str.3 = private unnamed_addr constant [16 x i8] c"Double free (?)\00", align 1
-
-data LLVMGConst = LLVMStringConst LLVMGlobalIdent LLVMType B.ByteString
+data LLVMGConst =
+  LLVMStringConst LLVMGlobalIdent
+                  LLVMType
+                  B.ByteString
+  deriving (Eq, Show)
 
 instance Pretty LLVMGConst where
-    pPrint (LLVMStringConst ident typ value) = pPrint ident <+> char '=' <+> pPrint typ <+> parens (pPrint cVal)
-        where cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack value)
+  pPrint (LLVMStringConst ident typ value) =
+    pPrint ident <+> char '=' <+> pPrint typ <+> parens (pPrint cVal)
+    where
+      cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack value)
 
 data LLVMStructDef =
   LLVMStructDef LLVMIdent
@@ -77,6 +79,7 @@ data LLVMExternFunc =
   LLVMExternFunc LLVMType
                  LLVMGlobalIdent
                  [LLVMType]
+  deriving (Eq, Show)
 
 instance Pretty LLVMExternFunc where
   pPrint (LLVMExternFunc rtype name args) =
@@ -88,12 +91,13 @@ latteStringDef :: LLVMStructDef
 latteStringDef = LLVMStructDef (LLVMIdent "__string") [I64, Ptr I8, I32]
 
 instance Pretty LLVMType where
-  pPrint I64       = "i64"
-  pPrint I32       = "i32"
-  pPrint I8        = "i8"
-  pPrint I1        = "i1"
-  pPrint (Ptr typ) = pPrint typ <> char '*'
-  pPrint String    = "__string"
+  pPrint I64           = "i64"
+  pPrint I32           = "i32"
+  pPrint I8            = "i8"
+  pPrint I1            = "i1"
+  pPrint Void          = "void"
+  pPrint (Ptr typ)     = pPrint typ <> char '*'
+  pPrint String        = "__string"
   pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
 
 data LLVMValue
@@ -215,7 +219,13 @@ instance Pretty LLVMIR where
   pPrint (Or r v v') = binOp "or" r v v'
   pPrint (Xor r v v') = binOp "xor" r v v'
   pPrint (Call r func args) =
-    pPrint r <+> char '=' <+> text "call" <+> pPrint func
+    pPrint r <+>
+    char '=' <+>
+    text "call" <+>
+    printType r <+>
+    pPrint func <>
+    parens
+      (hsep $ punctuate comma ((\arg -> printType arg <+> pPrint arg) <$> args))
 
 printType :: LLVMValue -> Doc
 printType = pPrint . getType
@@ -249,33 +259,35 @@ data LLVMFuncDef =
 data LLVMFunction = LLVMFunction
   { _definition :: LLVMFuncDef
   , _fblocks    :: [LLVMBlock]
-  , _entry      :: LLVMBlock
-  , _exit       :: LLVMBlock
+  , _init       :: LLVMBlock
   } deriving (Show, Eq)
 
 instance Pretty LLVMFunction where
   pPrint func =
-    header $+$ pPrint (_entry func) $+$ (vcat $ pPrint <$> (_fblocks func)) $+$
-    pPrint (_exit func)
+    header $+$ pPrint (_init func) $+$ (vcat $ pPrint <$> (_fblocks func)) $+$
+    char '}'
     where
       (LLVMFuncDef rtype name args) = _definition func
       header =
         text "define" <+>
         pPrint rtype <+>
-        char '@' <> pPrint name <>
-        parens (hsep $ punctuate comma (pPrint <$> args)) <>
+        pPrint name <> parens (hsep $ punctuate comma (pPrint <$> args)) <+>
         char '{'
 
 data LLVMModule = LLVMModule
   { _functions :: [LLVMFunction]
+  , _globals   :: [LLVMGConst]
+  , _externs   :: [LLVMExternFunc]
   } deriving (Show, Eq)
 
 data CodegenState = CodegenState
-  { _ast       :: AST.TopDef
-  , _nextLabel :: Integer
-  , _nextIdent :: Integer
-  , _blocks    :: M.Map LLVMLabel [LLVMIR]
-  , _localVars :: [(LLVMValue)]
+  { _ast        :: AST.TopDef
+  , _nextLabel  :: Integer
+  , _nextIdent  :: Integer
+  , _nextGlobal :: Integer
+  , _initBlock  :: [LLVMIR]
+  , _blocks     :: M.Map LLVMLabel [LLVMIR]
+  , _localVars  :: [(LLVMValue)]
   }
 
 data CodegenEnv = CodegenEnv
@@ -284,6 +296,11 @@ data CodegenEnv = CodegenEnv
   }
 
 type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
+
+currentFuncName :: CodegenM AST.Ident
+currentFuncName = do
+  (AST.TopDef _ ident _ _) <- gets _ast
+  return ident
 
 newBlock :: CodegenM LLVMLabel
 newBlock = do
@@ -298,6 +315,14 @@ newLabel = do
   return $ (LLVMLabel . newLabel) label
   where
     newLabel l = ("label_" `T.append` T.pack (show l))
+
+newGlobal :: CodegenM LLVMGlobalIdent
+newGlobal = do
+  ident <- gets _nextGlobal
+  modify (\s -> s {_nextGlobal = ident + 1})
+  funcName <- currentFuncName
+  let newGlob i = (funcName `T.append` "_" `T.append` T.pack (show i))
+  return $ (LLVMGlobalIdent . newGlob) ident
 
 newIdent :: CodegenM LLVMIdent
 newIdent = do
@@ -333,10 +358,8 @@ allocBool v = return (LLVMConst I1 n)
 allocLocalVar :: LLVMType -> CodegenM LLVMValue
 allocLocalVar t = do
   r <- allocReg (Ptr t)
-  modify
-    (\s ->
-       let newVars = r : (_localVars s)
-        in s {_localVars = newVars})
+  let alloca = Alloca r t
+  modify (\s -> s {_initBlock = alloca : (_initBlock s)})
   return r
 
 emit :: LLVMIR -> CodegenM ()
@@ -366,8 +389,8 @@ compileExpr AST.LitTrue = allocBool True
 compileExpr AST.LitFalse = allocBool False
 compileExpr (AST.Call ident exprs) = do
   res <- mapM compileExpr exprs
-  output <- allocReg I32
-  emit $ Call output (LLVMGlobalIdent ident) res -- TODO
+  output <- allocReg I32 -- TODO Return value
+  emit $ Call output (LLVMGlobalIdent ident) res
   return output
 compileExpr (AST.Neg exp) = compileExpr (AST.Add AST.Minus (AST.LitInt 0) exp)
 compileExpr (AST.Not exp) = do
@@ -435,6 +458,15 @@ compileBinOp opcode exp exp' = do
 store :: LLVMValue -> LLVMValue -> CodegenM ()
 store val addr = emit $ Store val addr
 
+llvmTypeMap :: M.Map AST.Type LLVMType
+llvmTypeMap =
+  M.fromList
+    [ (AST.TInteger, I32)
+    , (AST.TBool, I1)
+    , (AST.TVoid, Void)
+    , (AST.TString, Ptr String)
+    ]
+
 compileStmt :: AST.Stmt -> CodegenM CodegenEnv
 compileStmt AST.Empty = nop
 compileStmt (AST.Ass vname expr) = do
@@ -453,9 +485,6 @@ compileStmt (AST.Decl typ items) = do
   env <- ask
   let newVars = M.fromList (zip idents locs)
   return $ env {_varMap = (M.union newVars (_varMap env))}
-  where
-    llvmTypeMap =
-      M.fromList [(AST.TInteger, I32), (AST.TBool, I1), (AST.TVoid, Void)]
 compileStmt (AST.Ret Nothing) = do
   emit $ Ret Nothing
   nop
@@ -540,8 +569,36 @@ compileStatements stmts = compileAll stmts
       local (const env) (compileAll ss)
     compileAll [] = nop
 
+mangleFunctionName :: AST.Ident -> LLVMGlobalIdent
+mangleFunctionName ident = LLVMGlobalIdent (T.append "latte_" ident)
+
+generateFirstBlock :: CodegenM (CodegenEnv, LLVMFuncDef)
+generateFirstBlock = do
+  (AST.TopDef rtype fname args _) <- gets _ast
+  env <- ask
+  let rtyp' = (M.!) llvmTypeMap rtype
+  let fname' = mangleFunctionName fname
+  args' <- mapM argAlloc args
+  return (env, LLVMFuncDef rtyp' fname' args')
+  where
+    argAlloc :: AST.TypVar -> CodegenM LLVMValue
+    argAlloc (AST.TypVar typ ident) = do
+      let t = (M.!) llvmTypeMap typ
+      allocReg t
+
 generateCode :: CodegenM LLVMFunction
 generateCode = do
+  (startenv, def) <- generateFirstBlock
   (AST.TopDef _ _ _ stmts) <- gets _ast
-  entry <- compileStatements stmts
-  return (LLVMFunction {})
+  entry <- newBlock
+  local (setCurrentBlock entry) (compileStatements stmts)
+  initInsns <- gets _initBlock
+  let initInsns' = (Br entry) : initInsns
+  blocks <- (gets _blocks)
+  let blocks' = (\(l, insns) -> LLVMBlock l (reverse insns)) <$> M.toList blocks
+  return
+    (LLVMFunction
+       { _definition = def
+       , _init = LLVMBlock (LLVMLabel "init") (reverse initInsns')
+       , _fblocks = blocks'
+       })
