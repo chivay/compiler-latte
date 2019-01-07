@@ -72,8 +72,8 @@ instance Pretty Stmt where
     blockPack ("while" <+> parens (pPrint exp)) (vcat $ pPrint <$> stmts)
   pPrint (Loop exp stmt) =
     blockPack ("while" <> parens (pPrint exp)) (pPrint stmt)
-  pPrint (Incr ident) = pPrint ident <> "++"
-  pPrint (Decr ident) = pPrint ident <> "--"
+  pPrint (Incr ident) = pPrint ident <> "++" <> semi
+  pPrint (Decr ident) = pPrint ident <> "--" <> semi
   pPrint (Ret Nothing) = "return" <> semi
   pPrint (Ret (Just exp)) = "return" <+> pPrint exp <> semi
   pPrint (If cond (Block stmts)) =

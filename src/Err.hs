@@ -18,7 +18,7 @@ data CompileError
   | ReturnPathError
   | StmtLocatedError AST.Stmt
                      CompileError
-  | CodegenError
+  | CodegenError String
   deriving (Show)
 
 instance Pretty CompileError where

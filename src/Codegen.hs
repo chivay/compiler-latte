@@ -54,16 +54,15 @@ latteString :: LLVMType
 latteString = Ptr String
 
 data LLVMGConst =
-  LLVMStringConst LLVMGlobalIdent
-                  LLVMType
+  LLVMStringConst LLVMValue
                   B.ByteString
   deriving (Eq, Show)
 
 instance Pretty LLVMGConst where
-  pPrint (LLVMStringConst ident typ value) =
-    pPrint ident <+> char '=' <+> pPrint typ <+> parens (pPrint cVal)
+  pPrint (LLVMStringConst llval dat) =
+    pPrint llval <+> char '=' <+> printType llval <+> parens (pPrint cVal)
     where
-      cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack value)
+      cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack dat)
 
 data LLVMStructDef =
   LLVMStructDef LLVMIdent
@@ -105,11 +104,14 @@ data LLVMValue
               Integer
   | LLVMReg LLVMType
             LLVMIdent
+  | LLVMGlobal LLVMType
+               LLVMGlobalIdent
   deriving (Show, Eq)
 
 instance Pretty LLVMValue where
-  pPrint (LLVMConst _ n)   = pPrint n
-  pPrint (LLVMReg _ ident) = pPrint ident
+  pPrint (LLVMConst _ n)      = pPrint n
+  pPrint (LLVMReg _ ident)    = pPrint ident
+  pPrint (LLVMGlobal _ ident) = pPrint ident
 
 data LLVMIR
   = Ret (Maybe LLVMValue)
@@ -182,8 +184,9 @@ instance Pretty CmpOp where
   pPrint Slt = text "slt"
 
 getType :: LLVMValue -> LLVMType
-getType (LLVMConst t _) = t
-getType (LLVMReg t _)   = t
+getType (LLVMConst t _)  = t
+getType (LLVMReg t _)    = t
+getType (LLVMGlobal t _) = t
 
 labelAsIdent :: LLVMLabel -> LLVMIdent
 labelAsIdent (LLVMLabel l) = LLVMIdent l
@@ -204,6 +207,7 @@ instance Pretty LLVMIR where
     text "label" <+> (pPrint . labelAsIdent) label'
   pPrint (Add r v v') = binOp "add" r v v'
   pPrint (Sub r v v') = binOp "sub" r v v'
+  pPrint (Mul r v v') = binOp "mul" r v v'
   pPrint (SDiv r v v') = binOp "sdiv" r v v'
   pPrint (SRem r v v') = binOp "srem" r v v'
   pPrint (Store v vp) =
@@ -271,7 +275,10 @@ instance Pretty LLVMFunction where
       header =
         text "define" <+>
         pPrint rtype <+>
-        pPrint name <> parens (hsep $ punctuate comma (pPrint <$> args)) <+>
+        pPrint name <>
+        parens
+          (hsep $
+           punctuate comma ((\arg -> printType arg <+> pPrint arg) <$> args)) <+>
         char '{'
 
 data LLVMModule = LLVMModule
@@ -287,7 +294,7 @@ data CodegenState = CodegenState
   , _nextGlobal :: Integer
   , _initBlock  :: [LLVMIR]
   , _blocks     :: M.Map LLVMLabel [LLVMIR]
-  , _localVars  :: [(LLVMValue)]
+  , _globalDefs :: [LLVMGConst]
   }
 
 data CodegenEnv = CodegenEnv
@@ -316,13 +323,15 @@ newLabel = do
   where
     newLabel l = ("label_" `T.append` T.pack (show l))
 
-newGlobal :: CodegenM LLVMGlobalIdent
-newGlobal = do
+newGlobal :: LLVMType -> CodegenM LLVMValue
+newGlobal t = do
   ident <- gets _nextGlobal
   modify (\s -> s {_nextGlobal = ident + 1})
   funcName <- currentFuncName
-  let newGlob i = (funcName `T.append` "_" `T.append` T.pack (show i))
-  return $ (LLVMGlobalIdent . newGlob) ident
+  let newGlob =
+        ((mangleFunctionName funcName) `T.append` "_" `T.append`
+         T.pack (show ident))
+  return $ LLVMGlobal t (LLVMGlobalIdent newGlob)
 
 newIdent :: CodegenM LLVMIdent
 newIdent = do
@@ -337,7 +346,7 @@ getAddr name = do
   r <- asks ((M.lookup name) . _varMap)
   case r of
     Just val -> return val
-    Nothing  -> throwError CodegenError
+    Nothing  -> throwError $ CodegenError (show name)
 
 allocReg :: LLVMType -> CodegenM LLVMValue
 allocReg typ = do
@@ -381,10 +390,31 @@ load name = do
     derefType :: LLVMType -> LLVMType
     derefType (Ptr t) = t
 
+allocStringConst :: T.Text -> CodegenM LLVMValue
+allocStringConst txt = do
+  g <- newGlobal (Array bufLen I8)
+  modify (\s -> s {_globalDefs = (LLVMStringConst g buf) : (_globalDefs s)})
+  return g
+  where
+    bufLen = toInteger $ B.length buf
+    buf = E.encodeUtf8 txt
+
 compileExpr :: AST.Expr -> CodegenM LLVMValue
 compileExpr (AST.Var name) = load name
 compileExpr (AST.LitInt n) = allocConst n
-compileExpr (AST.LitString txt) = undefined
+compileExpr (AST.LitString txt) = do
+  stringPtr <- allocReg latteString
+  dummy <- allocReg Void
+  buf <- allocStringConst txt
+  emit $ Call stringPtr (LLVMGlobalIdent "__alloc_string") []
+  emit $
+    Call
+      dummy
+      (LLVMGlobalIdent "__init_string")
+      [stringPtr, buf, LLVMConst I64 bufLen, LLVMConst I1 0]
+  return stringPtr
+  where
+    bufLen = toInteger $ B.length $ E.encodeUtf8 txt
 compileExpr AST.LitTrue = allocBool True
 compileExpr AST.LitFalse = allocBool False
 compileExpr (AST.Call ident exprs) = do
@@ -569,8 +599,8 @@ compileStatements stmts = compileAll stmts
       local (const env) (compileAll ss)
     compileAll [] = nop
 
-mangleFunctionName :: AST.Ident -> LLVMGlobalIdent
-mangleFunctionName ident = LLVMGlobalIdent (T.append "latte_" ident)
+mangleFunctionName :: AST.Ident -> AST.Ident
+mangleFunctionName ident = T.append "latte_" ident
 
 generateFirstBlock :: CodegenM (CodegenEnv, LLVMFuncDef)
 generateFirstBlock = do
@@ -578,20 +608,27 @@ generateFirstBlock = do
   env <- ask
   let rtyp' = (M.!) llvmTypeMap rtype
   let fname' = mangleFunctionName fname
-  args' <- mapM argAlloc args
-  return (env, LLVMFuncDef rtyp' fname' args')
+  args' <- mapM argRegAlloc args
+  locs <- mapM allocLocalVar (getType <$> args')
+  let vars = M.fromList (zip (removeTypes args) locs)
+  return
+    (env {_varMap = vars}, LLVMFuncDef rtyp' (LLVMGlobalIdent fname') args')
   where
-    argAlloc :: AST.TypVar -> CodegenM LLVMValue
-    argAlloc (AST.TypVar typ ident) = do
+    argRegAlloc :: AST.TypVar -> CodegenM LLVMValue
+    argRegAlloc (AST.TypVar typ ident) = do
       let t = (M.!) llvmTypeMap typ
       allocReg t
+    removeTypes :: [AST.TypVar] -> [AST.Ident]
+    removeTypes = fmap unpack
+      where
+        unpack (AST.TypVar _ t) = t
 
 generateCode :: CodegenM LLVMFunction
 generateCode = do
   (startenv, def) <- generateFirstBlock
   (AST.TopDef _ _ _ stmts) <- gets _ast
   entry <- newBlock
-  local (setCurrentBlock entry) (compileStatements stmts)
+  local (const $ startenv {_currentBlock = entry}) (compileStatements stmts)
   initInsns <- gets _initBlock
   let initInsns' = (Br entry) : initInsns
   blocks <- (gets _blocks)

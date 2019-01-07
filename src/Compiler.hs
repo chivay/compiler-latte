@@ -274,7 +274,6 @@ compileFunction td = do
                                         , C._nextGlobal = 0
                                         , C._initBlock = []
                                         , C._blocks = M.empty
-                                        , C._localVars = []
                                       }
 
 
