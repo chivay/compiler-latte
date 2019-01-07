@@ -26,16 +26,41 @@ instance Pretty LLVMIdent where
 instance Pretty LLVMFuncIdent where
     pPrint (LLVMFuncIdent label) = char '@' <> (text $ T.unpack label)
 
-data LLVMType = I32
+data LLVMType = I64
+              | I32
+              | I8
               | I1
               | Void
               | Ptr LLVMType
+              | String
               deriving (Show, Eq)
+latteString :: LLVMType
+latteString = Ptr String
+
+data LLVMStructDef = LLVMStructDef LLVMIdent [LLVMType]
+
+instance Pretty LLVMStructDef where
+    pPrint (LLVMStructDef name fields) = pPrint name <+> char '=' <+> text "type"
+                               <+> braces (hsep $ punctuate comma (pPrint <$> fields))
+
+data LLVMExternFunc = LLVMExternFunc LLVMType LLVMFuncIdent [LLVMType]
+instance Pretty LLVMExternFunc where
+    pPrint (LLVMExternFunc rtype name args) = text "declare" <+> pPrint rtype <+> pPrint name
+                               <+> parens (hsep $ punctuate comma (pPrint <$> args))
+
+
+
+latteStringDef :: LLVMStructDef
+latteStringDef = LLVMStructDef (LLVMIdent "__string") [I64, Ptr I8, I32]
+
 
 instance Pretty LLVMType where
+    pPrint I64 = "i64"
     pPrint I32 = "i32"
+    pPrint I8 = "i8"
     pPrint I1 = "i1"
     pPrint (Ptr typ) = pPrint typ <> char '*'
+    pPrint String = "__string"
 
 data LLVMValue = LLVMConst LLVMType Integer
                | LLVMReg   LLVMType LLVMIdent
