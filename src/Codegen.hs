@@ -67,6 +67,7 @@ instance Pretty LLVMGConst where
 data LLVMStructDef =
   LLVMStructDef LLVMIdent
                 [LLVMType]
+  deriving (Eq, Show)
 
 instance Pretty LLVMStructDef where
   pPrint (LLVMStructDef name fields) =
@@ -96,7 +97,7 @@ instance Pretty LLVMType where
   pPrint I1            = "i1"
   pPrint Void          = "void"
   pPrint (Ptr typ)     = pPrint typ <> char '*'
-  pPrint String        = "__string"
+  pPrint String        = "%__string"
   pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
 
 data LLVMValue
@@ -188,23 +189,20 @@ getType (LLVMConst t _)  = t
 getType (LLVMReg t _)    = t
 getType (LLVMGlobal t _) = t
 
-labelAsIdent :: LLVMLabel -> LLVMIdent
-labelAsIdent (LLVMLabel l) = LLVMIdent l
-
 instance Pretty LLVMIR where
   pPrint (Ret Nothing) = text "ret" <+> text "void"
   pPrint (Ret (Just val)) = text "ret" <+> (pPrint . getType) val <+> pPrint val
   pPrint (Alloca res typ) =
     pPrint res <+> char '=' <+> text "alloca" <+> pPrint typ
   pPrint (Br label) =
-    text "br" <+> text "label" <+> (pPrint . labelAsIdent) label
+    text "br" <+> text "label" <+> char '%' <> pPrint label
   pPrint (BrCond v label label') =
     text "br" <+>
     printType v <+>
     pPrint v <> char ',' <+>
     text "label" <+>
-    (pPrint . labelAsIdent) label <> char ',' <+>
-    text "label" <+> (pPrint . labelAsIdent) label'
+    char '%' <> pPrint label <> char ',' <+>
+    text "label" <+> char '%' <> pPrint label'
   pPrint (Add r v v') = binOp "add" r v v'
   pPrint (Sub r v v') = binOp "sub" r v v'
   pPrint (Mul r v v') = binOp "mul" r v v'
@@ -285,7 +283,14 @@ data LLVMModule = LLVMModule
   { _functions :: [LLVMFunction]
   , _globals   :: [LLVMGConst]
   , _externs   :: [LLVMExternFunc]
+  , _structs   :: [LLVMStructDef]
   } deriving (Show, Eq)
+
+instance Pretty LLVMModule where
+  pPrint mod =
+    vcat (pPrint <$> (_globals mod)) $+$ vcat (pPrint <$> (_structs mod)) $+$
+    vcat (pPrint <$> (_externs mod)) $+$
+    vcat (pPrint <$> (_functions mod))
 
 data CodegenState = CodegenState
   { _ast        :: AST.TopDef
@@ -504,12 +509,16 @@ compileStmt (AST.Ass vname expr) = do
   r <- compileExpr expr
   emit $ Store r addr
   nop
+-- REFACTOR THIS
 compileStmt (AST.Decl typ items) = do
   let t = (M.!) llvmTypeMap typ
   locs <- mapM allocLocalVar (replicate (length items) t)
   let items' = (\(AST.DeclItem ident mexp) -> (ident, mexp)) <$> items
   let idents = fst <$> items'
-  let mexprs = (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
+  let mexprs = case typ of
+                 AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
+                 AST.TBool -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
+                 AST.TString -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
   results <- mapM compileExpr mexprs
   mapM_ (\(val, addr) -> store val addr) (zip results locs)
   env <- ask

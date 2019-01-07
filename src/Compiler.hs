@@ -257,14 +257,7 @@ compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
 compileFunction td = do
   case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
-    (Right (func, s)) -> do
-        liftIO $ (print.pPrint) func
---        let blocks = C._blocks s
---        mapM_ (\(lab, insns) -> let block = C.LLVMBlock {
---                        C._label = lab
---                      , C._insns = reverse insns
---                      } in (liftIO.print.pPrint) block) (M.toList blocks)
-        return func
+    (Right (func, s)) -> return func
     where initialEnv = C.CodegenEnv { C._varMap = M.empty
                                     , C._currentBlock = C.LLVMLabel "?"
                                     }
@@ -281,6 +274,15 @@ generateCode :: CompilerM ()
 generateCode = do
   (AST.Program tds) <- gets _ast
   funcs <- mapM compileFunction tds
+  let mod = C.LLVMModule
+               { C._functions = funcs
+               , C._globals = []
+               , C._externs = []
+               , C._structs = [ C.LLVMStructDef (C.LLVMIdent "__string") [ C.I64, C.Ptr(C.I8), C.I32
+                                                                         ]
+                              ]
+               }
+  liftIO $ (print.pPrint) mod
   return ()
 
 compileProgram :: AST.Program -> IO ()
@@ -304,7 +306,7 @@ compileProgram prog = do
       printString "Generating code..."
       generateCode
     printString :: String -> CompilerM ()
-    printString = liftIO.putStrLn
+    printString _ = return ()
     initialState =
       CompilerState
         { _filename = "prog.lat"

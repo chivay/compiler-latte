@@ -21,7 +21,7 @@ compileFile filename = do
   case res of
     Left err      -> (failWithError . show) err
     Right program -> do
-        (print . pPrint) program
+        --(print . pPrint) program
         C.compileProgram program
 
 main :: IO ()
