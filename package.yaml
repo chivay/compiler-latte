@@ -19,6 +19,7 @@ dependencies:
 - base >= 4.7 && < 5
 - text
 - containers
+- bytestring
 name: compiler-latte
 version: 0.1.0.0
 extra-source-files:

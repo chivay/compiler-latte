@@ -9,7 +9,10 @@ import           Control.Monad.State
 import qualified Data.Map                       as M
 import           Data.Maybe
 import qualified Data.Text                      as T
+import qualified Data.Text.Encoding             as E
+import qualified Data.ByteString                as B
 import           Err
+import           Numeric (showHex)
 import           Prelude                        hiding ((<>))
 import           Text.PrettyPrint
 import           Text.PrettyPrint.HughesPJClass
@@ -22,8 +25,8 @@ newtype LLVMIdent =
   LLVMIdent T.Text
   deriving (Show, Eq)
 
-newtype LLVMFuncIdent =
-  LLVMFuncIdent T.Text
+newtype LLVMGlobalIdent =
+  LLVMGlobalIdent T.Text
   deriving (Show, Eq)
 
 instance Pretty LLVMLabel where
@@ -32,8 +35,8 @@ instance Pretty LLVMLabel where
 instance Pretty LLVMIdent where
   pPrint (LLVMIdent label) = char '%' <> (text $ T.unpack label)
 
-instance Pretty LLVMFuncIdent where
-  pPrint (LLVMFuncIdent label) = char '@' <> (text $ T.unpack label)
+instance Pretty LLVMGlobalIdent where
+  pPrint (LLVMGlobalIdent label) = char '@' <> (text $ T.unpack label)
 
 data LLVMType
   = I64
@@ -43,10 +46,22 @@ data LLVMType
   | Void
   | Ptr LLVMType
   | String
+  | Array Integer LLVMType
   deriving (Show, Eq)
 
 latteString :: LLVMType
 latteString = Ptr String
+
+-- @.str = private unnamed_addr constant [21 x i8] c"Unrecoverable error:\00", align 1
+-- @.str.1 = private unnamed_addr constant [15 x i8] c"Out of memory!\00", align 1
+-- @.str.2 = private unnamed_addr constant [28 x i8] c"Reference counter overflow!\00", align 1
+-- @.str.3 = private unnamed_addr constant [16 x i8] c"Double free (?)\00", align 1
+
+data LLVMGConst = LLVMStringConst LLVMGlobalIdent LLVMType B.ByteString
+
+instance Pretty LLVMGConst where
+    pPrint (LLVMStringConst ident typ value) = pPrint ident <+> char '=' <+> pPrint typ <+> parens (pPrint cVal)
+        where cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack value)
 
 data LLVMStructDef =
   LLVMStructDef LLVMIdent
@@ -60,7 +75,7 @@ instance Pretty LLVMStructDef where
 
 data LLVMExternFunc =
   LLVMExternFunc LLVMType
-                 LLVMFuncIdent
+                 LLVMGlobalIdent
                  [LLVMType]
 
 instance Pretty LLVMExternFunc where
@@ -79,6 +94,7 @@ instance Pretty LLVMType where
   pPrint I1        = "i1"
   pPrint (Ptr typ) = pPrint typ <> char '*'
   pPrint String    = "__string"
+  pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
 
 data LLVMValue
   = LLVMConst LLVMType
@@ -119,7 +135,7 @@ data LLVMIR
   | Load LLVMValue
          LLVMValue
   | Call LLVMValue
-         LLVMFuncIdent
+         LLVMGlobalIdent
          [LLVMValue]
   | ICmp CmpOp
          LLVMValue
@@ -226,7 +242,7 @@ instance Pretty LLVMBlock where
 
 data LLVMFuncDef =
   LLVMFuncDef LLVMType
-              LLVMFuncIdent
+              LLVMGlobalIdent
               [LLVMValue]
   deriving (Eq, Show)
 
@@ -351,7 +367,7 @@ compileExpr AST.LitFalse = allocBool False
 compileExpr (AST.Call ident exprs) = do
   res <- mapM compileExpr exprs
   output <- allocReg I32
-  emit $ Call output (LLVMFuncIdent ident) res -- TODO
+  emit $ Call output (LLVMGlobalIdent ident) res -- TODO
   return output
 compileExpr (AST.Neg exp) = compileExpr (AST.Add AST.Minus (AST.LitInt 0) exp)
 compileExpr (AST.Not exp) = do
