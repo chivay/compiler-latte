@@ -253,7 +253,7 @@ checkReturnPaths = do
         willReturn (IfElse _ stmt stmt') = willReturn stmt && willReturn stmt'
         willReturn _ = False
 
-compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
+compileFunction :: AST.TopDef -> CompilerM (C.LLVMFunction, [C.LLVMGConst])
 compileFunction td = do
   localFunctions <- gets _topDefs
   let initialEnv = C.CodegenEnv { C._varMap = M.empty
@@ -267,7 +267,7 @@ compileFunction td = do
                                     }
   case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
-    (Right (func, s)) -> return func
+    (Right (func, s)) -> return (func, C._globalDefs s)
     where libraryFunction :: T.Text -> C.LLVMType -> (C.LLVMGlobalIdent, (C.LLVMGlobalIdent,C.LLVMType))
           libraryFunction func ret = (glob func, (mangledIdent, ret))
                 where mangledIdent = glob ("__latte_std_" `T.append` func)
@@ -281,7 +281,8 @@ compileFunction td = do
                 where funcs = M.toList m
                       (idents, types) = unzip funcs
                       llvmIdents = (\i -> C.LLVMGlobalIdent i) <$> idents
-                      mangledIdents = (localFunction <$> idents) <*> types'
+                      mangledIdents = (\(f, t) -> f t) <$> (zip partial types')
+                      partial = localFunction <$> idents
                       llvmTypes = (M.!) C.llvmTypeMap
                       types' = llvmTypes <$> (\(TFunc r _) -> r) <$> types
                       values = zip mangledIdents types'
@@ -298,14 +299,20 @@ compileFunction td = do
 generateCode :: CompilerM ()
 generateCode = do
   (AST.Program tds) <- gets _ast
-  funcs <- mapM compileFunction tds
+  output <- mapM compileFunction tds
+  let funcs = fst <$> output
+  let globals = foldl (++) [] (snd <$> output)
   let mod = C.LLVMModule
                { C._functions = funcs
-               , C._globals = []
+               , C._globals = globals
                , C._externs = [C.LLVMExternFunc C.Void (func "__latte_std_printInt") [C.I32],
                                C.LLVMExternFunc C.Void (func "__latte_std_printString") [C.latteString],
                                C.LLVMExternFunc C.I32 (func "__latte_std_readInt") [],
                                C.LLVMExternFunc C.latteString (func "__latte_std_readString") [],
+
+                               C.LLVMExternFunc C.latteString (func "__alloc_string") [],
+                               C.LLVMExternFunc C.Void (func "__init_string") [C.latteString, C.Ptr(C.I8), C.I64, C.I1],
+
                                C.LLVMExternFunc C.Void (func "__latte_std_error") []]
                , C._structs = [ C.LLVMStructDef (C.LLVMIdent "__string") [ C.I64, C.Ptr(C.I8), C.I32
                                                                          ]

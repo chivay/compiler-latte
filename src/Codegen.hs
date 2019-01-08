@@ -60,9 +60,12 @@ data LLVMGConst =
 
 instance Pretty LLVMGConst where
   pPrint (LLVMStringConst llval dat) =
-    pPrint llval <+> char '=' <+> printType llval <+> parens (pPrint cVal)
+    pPrint llval <+>
+    char '=' <+>
+    text "constant" <+> printType llval <+> char 'c' <> doubleQuotes (text cVal)
     where
-      cVal = concat $ (++ "\\") <$> ($ "") <$> showHex <$> (B.unpack dat)
+      cVal =
+        concat $ (\s -> '\\' : s) <$> ($ "") <$> (showHex <$> (B.unpack dat))
 
 data LLVMStructDef =
   LLVMStructDef LLVMIdent
@@ -157,6 +160,8 @@ data LLVMIR
   | Xor LLVMValue
         LLVMValue
         LLVMValue
+  | Bitcast LLVMValue
+            LLVMValue
   deriving (Show, Eq)
 
 data CmpOp
@@ -229,6 +234,10 @@ instance Pretty LLVMIR where
         case getType r of
           Void -> text "call" <+> text "void"
           typ  -> pPrint r <+> char '=' <+> text "call" <+> printType r
+  pPrint (Bitcast r s) =
+    pPrint r <+>
+    char '=' <+>
+    text "bitcast" <+> printWithType s <+> text "to" <+> printType r
 
 printType :: LLVMValue -> Doc
 printType = pPrint . getType
@@ -307,7 +316,7 @@ data CodegenEnv = CodegenEnv
   { _varMap       :: M.Map AST.Ident LLVMValue
   , _currentBlock :: LLVMLabel
   , _funcRet      :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
-  } deriving Show
+  } deriving (Show)
 
 type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
 
@@ -338,7 +347,7 @@ newGlobal t = do
   let newGlob =
         ((mangleFunctionName funcName) `T.append` "_" `T.append`
          T.pack (show ident))
-  return $ LLVMGlobal t (LLVMGlobalIdent newGlob)
+  return $ LLVMGlobal (Ptr t) (LLVMGlobalIdent newGlob)
 
 newIdent :: CodegenM LLVMIdent
 newIdent = do
@@ -401,8 +410,17 @@ load name = do
 allocStringConst :: T.Text -> CodegenM LLVMValue
 allocStringConst txt = do
   g <- newGlobal (Array bufLen I8)
-  modify (\s -> s {_globalDefs = (LLVMStringConst g buf) : (_globalDefs s)})
-  return g
+  let (LLVMGlobal _ id) = g
+  modify
+    (\s ->
+       s
+         { _globalDefs =
+             (LLVMStringConst (LLVMGlobal (Array bufLen I8) id) buf) :
+             (_globalDefs s)
+         })
+  r <- allocReg (Ptr I8)
+  emit $ Bitcast r g
+  return r
   where
     bufLen = toInteger $ B.length buf
     buf = E.encodeUtf8 txt
