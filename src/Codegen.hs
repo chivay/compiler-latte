@@ -27,7 +27,7 @@ newtype LLVMIdent =
 
 newtype LLVMGlobalIdent =
   LLVMGlobalIdent T.Text
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 instance Pretty LLVMLabel where
   pPrint (LLVMLabel label) = text $ T.unpack label
@@ -194,8 +194,7 @@ instance Pretty LLVMIR where
   pPrint (Ret (Just val)) = text "ret" <+> (pPrint . getType) val <+> pPrint val
   pPrint (Alloca res typ) =
     pPrint res <+> char '=' <+> text "alloca" <+> pPrint typ
-  pPrint (Br label) =
-    text "br" <+> text "label" <+> char '%' <> pPrint label
+  pPrint (Br label) = text "br" <+> text "label" <+> char '%' <> pPrint label
   pPrint (BrCond v label label') =
     text "br" <+>
     printType v <+>
@@ -221,13 +220,15 @@ instance Pretty LLVMIR where
   pPrint (Or r v v') = binOp "or" r v v'
   pPrint (Xor r v v') = binOp "xor" r v v'
   pPrint (Call r func args) =
-    pPrint r <+>
-    char '=' <+>
-    text "call" <+>
-    printType r <+>
+    prefix <+>
     pPrint func <>
     parens
       (hsep $ punctuate comma ((\arg -> printType arg <+> pPrint arg) <$> args))
+    where
+      prefix =
+        case getType r of
+          Void -> text "call" <+> text "void"
+          typ  -> pPrint r <+> char '=' <+> text "call" <+> printType r
 
 printType :: LLVMValue -> Doc
 printType = pPrint . getType
@@ -305,7 +306,8 @@ data CodegenState = CodegenState
 data CodegenEnv = CodegenEnv
   { _varMap       :: M.Map AST.Ident LLVMValue
   , _currentBlock :: LLVMLabel
-  }
+  , _funcRet      :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
+  } deriving Show
 
 type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
 
@@ -355,8 +357,9 @@ getAddr name = do
 
 allocReg :: LLVMType -> CodegenM LLVMValue
 allocReg typ = do
-  id <- newIdent
-  return (LLVMReg typ id)
+  (LLVMIdent id) <- newIdent
+  let rid = LLVMIdent ("r" `T.append` id)
+  return (LLVMReg typ rid)
 
 allocConst :: Integer -> CodegenM LLVMValue
 allocConst n = return (LLVMConst I32 n)
@@ -424,8 +427,10 @@ compileExpr AST.LitTrue = allocBool True
 compileExpr AST.LitFalse = allocBool False
 compileExpr (AST.Call ident exprs) = do
   res <- mapM compileExpr exprs
-  output <- allocReg I32 -- TODO Return value
-  emit $ Call output (LLVMGlobalIdent ident) res
+  funcs <- asks _funcRet
+  let (mident, rtype) = (M.!) funcs (LLVMGlobalIdent ident)
+  output <- allocReg rtype
+  emit $ Call output mident res
   return output
 compileExpr (AST.Neg exp) = compileExpr (AST.Add AST.Minus (AST.LitInt 0) exp)
 compileExpr (AST.Not exp) = do
@@ -515,10 +520,11 @@ compileStmt (AST.Decl typ items) = do
   locs <- mapM allocLocalVar (replicate (length items) t)
   let items' = (\(AST.DeclItem ident mexp) -> (ident, mexp)) <$> items
   let idents = fst <$> items'
-  let mexprs = case typ of
-                 AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
-                 AST.TBool -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
-                 AST.TString -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
+  let mexprs =
+        case typ of
+          AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
+          AST.TBool    -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
+          AST.TString  -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
   results <- mapM compileExpr mexprs
   mapM_ (\(val, addr) -> store val addr) (zip results locs)
   env <- ask
@@ -581,7 +587,7 @@ compileStmt (AST.IfElse exp stmt stmt') = do
         local (setCurrentBlock lastBlock) (emit $ Br postBlock))
   local
     (setCurrentBlock falseBlock)
-    (do env' <- compileStmt stmt
+    (do env' <- compileStmt stmt'
         let lastBlock = _currentBlock env'
         local (setCurrentBlock lastBlock) (emit $ Br postBlock))
   env <- ask

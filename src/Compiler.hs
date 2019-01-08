@@ -255,17 +255,42 @@ checkReturnPaths = do
 
 compileFunction :: AST.TopDef -> CompilerM C.LLVMFunction
 compileFunction td = do
+  localFunctions <- gets _topDefs
+  let initialEnv = C.CodegenEnv { C._varMap = M.empty
+                                    , C._currentBlock = C.LLVMLabel "?"
+                                    , C._funcRet = (M.fromList [ libraryFunction "printInt" C.Void
+                                                               , libraryFunction "printString" C.Void
+                                                               , libraryFunction "error" C.Void
+                                                               , libraryFunction "readInt" C.I32
+                                                               , libraryFunction "readString" C.latteString
+                                                    ]) `M.union` (toCodegenDefs localFunctions)
+                                    }
   case runExcept (runStateT (runReaderT C.generateCode initialEnv) initialState) of
     (Left e) -> throwError e
     (Right (func, s)) -> return func
-    where initialEnv = C.CodegenEnv { C._varMap = M.empty
-                                    , C._currentBlock = C.LLVMLabel "?"
-                                    }
+    where libraryFunction :: T.Text -> C.LLVMType -> (C.LLVMGlobalIdent, (C.LLVMGlobalIdent,C.LLVMType))
+          libraryFunction func ret = (glob func, (mangledIdent, ret))
+                where mangledIdent = glob ("__latte_std_" `T.append` func)
+                      glob = C.LLVMGlobalIdent
+          localFunction :: T.Text -> C.LLVMType -> (C.LLVMGlobalIdent, (C.LLVMGlobalIdent,C.LLVMType))
+          localFunction func ret = (glob func, (mangledIdent, ret))
+                where mangledIdent = glob ("latte_" `T.append` func)
+                      glob = C.LLVMGlobalIdent
+          toCodegenDefs :: M.Map Ident Type -> M.Map C.LLVMGlobalIdent (C.LLVMGlobalIdent, C.LLVMType)
+          toCodegenDefs m = M.fromList mangledIdents
+                where funcs = M.toList m
+                      (idents, types) = unzip funcs
+                      llvmIdents = (\i -> C.LLVMGlobalIdent i) <$> idents
+                      mangledIdents = (localFunction <$> idents) <*> types'
+                      llvmTypes = (M.!) C.llvmTypeMap
+                      types' = llvmTypes <$> (\(TFunc r _) -> r) <$> types
+                      values = zip mangledIdents types'
           initialState = C.CodegenState { C._ast = td
                                         , C._nextLabel = 0
                                         , C._nextIdent = 0
                                         , C._nextGlobal = 0
                                         , C._initBlock = []
+                                        , C._globalDefs = []
                                         , C._blocks = M.empty
                                       }
 
@@ -277,13 +302,18 @@ generateCode = do
   let mod = C.LLVMModule
                { C._functions = funcs
                , C._globals = []
-               , C._externs = []
+               , C._externs = [C.LLVMExternFunc C.Void (func "__latte_std_printInt") [C.I32],
+                               C.LLVMExternFunc C.Void (func "__latte_std_printString") [C.latteString],
+                               C.LLVMExternFunc C.I32 (func "__latte_std_readInt") [],
+                               C.LLVMExternFunc C.latteString (func "__latte_std_readString") [],
+                               C.LLVMExternFunc C.Void (func "__latte_std_error") []]
                , C._structs = [ C.LLVMStructDef (C.LLVMIdent "__string") [ C.I64, C.Ptr(C.I8), C.I32
                                                                          ]
                               ]
                }
   liftIO $ (print.pPrint) mod
   return ()
+      where func = C.LLVMGlobalIdent
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
