@@ -310,11 +310,11 @@ data CodegenState = CodegenState
   , _initBlock  :: [LLVMIR]
   , _blocks     :: M.Map LLVMLabel [LLVMIR]
   , _globalDefs :: [LLVMGConst]
+  , _currentBlock :: LLVMLabel
   }
 
 data CodegenEnv = CodegenEnv
   { _varMap       :: M.Map AST.Ident LLVMValue
-  , _currentBlock :: LLVMLabel
   , _funcRet      :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
   } deriving (Show)
 
@@ -390,7 +390,7 @@ allocLocalVar t = do
 
 emit :: LLVMIR -> CodegenM ()
 emit ins = do
-  block <- asks _currentBlock
+  block <- gets _currentBlock
   case block of
     (LLVMLabel "init") -> modify (\s -> s {_initBlock = ins:(_initBlock s)})
     _ -> modify
@@ -504,8 +504,42 @@ compileExpr (AST.Comp rop exp exp') = do
         , (AST.Equal, Eq)
         , (AST.NEqual, Ne)
         ]
-compileExpr (AST.And exp exp') = compileBinOp (And) exp exp'
-compileExpr (AST.Or exp exp') = compileBinOp (Or) exp exp'
+compileExpr (AST.And exp exp') = do
+    loc <- allocLocalVar I1
+    doSecond <- newBlock
+    postBlock <- newBlock
+    store (LLVMConst I1 0) loc
+    p <- compileExpr exp
+    emit $ BrCond p doSecond postBlock
+
+    setCurrentBlock doSecond
+    r <- compileExpr exp'
+    store r loc
+    emit $ Br postBlock
+
+    setCurrentBlock postBlock
+    r <- allocReg I1
+    emit $ Load r loc
+    return r
+
+compileExpr (AST.Or exp exp') = do
+    loc <- allocLocalVar I1
+    doSecond <- newBlock
+    postBlock <- newBlock
+    store (LLVMConst I1 1) loc
+    p <- compileExpr exp
+    emit $ BrCond p postBlock doSecond
+
+    setCurrentBlock doSecond
+    r <- compileExpr exp'
+    store r loc
+    emit $ Br postBlock
+
+    setCurrentBlock postBlock
+    r <- allocReg I1
+    emit $ Load r loc
+    return r
+
 
 compileBinOp ::
      (LLVMValue -> LLVMValue -> LLVMValue -> LLVMIR)
@@ -566,22 +600,22 @@ compileStmt (AST.Loop exp stmt) = do
   bodyBlock <- newBlock
   postBlock <- newBlock
   emit $ Br condBlock
-  local
-    (setCurrentBlock condBlock)
-    (do r <- compileExpr exp
-        emit $ BrCond r bodyBlock postBlock)
-  local
-    (setCurrentBlock bodyBlock)
-    (do env' <- compileStmt stmt
-        let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (emit $ Br condBlock))
-  env <- ask
-  return (setCurrentBlock postBlock env)
+
+  setCurrentBlock condBlock
+  r <- compileExpr exp
+  emit $ BrCond r bodyBlock postBlock
+
+  setCurrentBlock bodyBlock
+  compileStmt stmt
+  emit $ Br condBlock
+
+  setCurrentBlock postBlock
+  nop
+
 compileStmt (AST.Block stmts) = do
-  env <- ask
-  env' <- compileStatements stmts
-  let lastBlock = _currentBlock env'
-  return (setCurrentBlock lastBlock env)
+  compileStatements stmts
+  nop
+
 compileStmt (AST.Incr var) =
   compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Var var) (AST.LitInt 1)))
 compileStmt (AST.Decr var) =
@@ -591,15 +625,16 @@ compileStmt (AST.If AST.LitFalse _) = nop
 compileStmt stmT@(AST.If exp stmt) = do
   bodyBlock <- newBlock
   postBlock <- newBlock
+
   r <- compileExpr exp
   emit $ BrCond r bodyBlock postBlock
-  local
-    (setCurrentBlock bodyBlock)
-    (do env' <- compileStmt stmt
-        let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (emit $ Br postBlock))
-  env <- ask
-  return (setCurrentBlock postBlock env)
+
+  setCurrentBlock bodyBlock
+  compileStmt stmt
+  emit $ Br postBlock
+
+  setCurrentBlock postBlock
+  nop
 compileStmt (AST.IfElse AST.LitTrue stmt _) = compileStmt stmt
 compileStmt (AST.IfElse AST.LitFalse _ stmt) = compileStmt stmt
 compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
@@ -608,24 +643,24 @@ compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
   postBlock <- newBlock
   r <- compileExpr exp
   emit $ BrCond r trueBlock falseBlock
-  local
-    (setCurrentBlock trueBlock)
-    (do env' <- compileStmt stmt
-        let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (when (not $ willReturn stmtT) $ emit $ Br postBlock))
-  local
-    (setCurrentBlock falseBlock)
-    (do env' <- compileStmt stmt'
-        let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (when (not $ willReturn stmtT) $ emit $ Br postBlock))
-  env <- ask
-  return (setCurrentBlock postBlock env)
+
+  setCurrentBlock trueBlock
+  compileStmt stmt
+  when (not $ willReturn stmtT) (emit $ Br postBlock)
+
+  setCurrentBlock falseBlock
+  compileStmt stmt'
+  when (not $ willReturn stmtT) (emit $ Br postBlock)
+  setCurrentBlock postBlock
+  nop
+
 compileStmt (AST.ExpS exp) = do
   compileExpr exp
   nop
 
-setCurrentBlock :: LLVMLabel -> CodegenEnv -> CodegenEnv
-setCurrentBlock l env = env {_currentBlock = l}
+setCurrentBlock :: LLVMLabel -> CodegenM ()
+setCurrentBlock l = do
+    modify (\s -> s {_currentBlock = l})
 
 nop :: CodegenM CodegenEnv
 nop = do
@@ -687,7 +722,10 @@ generateCode = do
   let stmts' = if rtype == AST.TVoid
                   then stmts ++ [AST.Ret Nothing]
                   else stmts
-  local (const $ startenv {_currentBlock = entry}) (compileStatements stmts')
+
+  setCurrentBlock entry
+  local (const $ startenv) (compileStatements stmts')
+
   initInsns <- gets _initBlock
   let initInsns' = (Br entry) : initInsns
   blocks <- (gets _blocks)
