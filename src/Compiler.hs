@@ -257,7 +257,7 @@ compileFunction :: AST.TopDef -> CompilerM (C.LLVMFunction, [C.LLVMGConst])
 compileFunction td = do
   localFunctions <- gets _topDefs
   let initialEnv = C.CodegenEnv { C._varMap = M.empty
-                                    , C._currentBlock = C.LLVMLabel "?"
+                                    , C._currentBlock = C.LLVMLabel "init"
                                     , C._funcRet = (M.fromList [ libraryFunction "printInt" C.Void
                                                                , libraryFunction "printString" C.Void
                                                                , libraryFunction "error" C.Void

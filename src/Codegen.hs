@@ -391,11 +391,12 @@ allocLocalVar t = do
 emit :: LLVMIR -> CodegenM ()
 emit ins = do
   block <- asks _currentBlock
-  modify
-    (\s ->
-       let newBlock = ins : ((_blocks s) M.! block)
-        in s {_blocks = M.insert block newBlock (_blocks s)})
-  return ()
+  case block of
+    (LLVMLabel "init") -> modify (\s -> s {_initBlock = ins:(_initBlock s)})
+    _ -> modify
+           (\s ->
+             let newBlock = ins : ((_blocks s) M.! block)
+             in s {_blocks = M.insert block newBlock (_blocks s)})
 
 load :: AST.Ident -> CodegenM LLVMValue
 load name = do
@@ -660,6 +661,7 @@ generateFirstBlock = do
   let fname' = mangleFunctionName fname
   args' <- mapM argRegAlloc args
   locs <- mapM allocLocalVar (getType <$> args')
+  mapM (\(r,addr) -> store r addr) (zip args' locs)
   let vars = M.fromList (zip (removeTypes args) locs)
   return
     (env {_varMap = vars}, LLVMFuncDef rtyp' (LLVMGlobalIdent fname') args')
