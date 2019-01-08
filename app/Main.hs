@@ -19,8 +19,11 @@ compileFile :: String -> IO ()
 compileFile filename = do
   res <- P.parseSource filename
   case res of
-    Left err      -> (failWithError . show) err
+    Left err      -> do
+        hPutStrLn stderr "ERROR"
+        (failWithError . show) err
     Right program -> do
+        hPutStrLn stderr "OK"
         C.compileProgram program
 
 main :: IO ()

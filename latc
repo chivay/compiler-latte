@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+LLFILE=$(mktemp)
+BITCODE=$(mktemp)
+
+./compiler-latte-exe $1 > $LLFILE
+llvm-link $LLFILE ./lib/runtime.ll -o $BITCODE
+lli $BITCODE

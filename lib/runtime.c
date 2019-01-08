@@ -122,8 +122,8 @@ struct __string* __latte_std_readString(void)
 {
     uint8_t tmp[1024];
     /// TODO: fix this
-    fscanf(stdin, "%s", &tmp);
-    size_t len = strlen(tmp);
+    fscanf(stdin, "%s", (char *)&tmp);
+    size_t len = strlen((char*)tmp);
     struct __string *str = __alloc_string();
     __init_string(str, tmp, len, false);
     return str;

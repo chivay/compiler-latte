@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+INPUT=$1
+
+FNAME="${INPUT%.*}"
+
+LLFILE=$FNAME.ll
+BITCODE=$FNAME.bc
+
+./compiler-latte-exe $1 > $LLFILE
+llvm-link $LLFILE ./lib/runtime.ll -o $BITCODE
