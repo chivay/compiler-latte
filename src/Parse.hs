@@ -108,7 +108,7 @@ decStmt =
   try
     (do var <- ident
         reservedOp "--"
-        return $ Incr var)
+        return $ Decr var)
 
 returnStmt :: Parser Stmt
 returnStmt = do

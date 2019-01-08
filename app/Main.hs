@@ -21,7 +21,6 @@ compileFile filename = do
   case res of
     Left err      -> (failWithError . show) err
     Right program -> do
-        --(print . pPrint) program
         C.compileProgram program
 
 main :: IO ()
@@ -30,4 +29,3 @@ main = do
   case args of
     [filename] -> compileFile filename
     _ -> failWithError "Invalid arguments!"
---  putStrLn "Latte Compiler v0.1"
