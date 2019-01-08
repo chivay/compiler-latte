@@ -82,14 +82,26 @@ uint8_t* __get_buf_string(struct __string *str)
     return str->buf;
 }
 
+struct __string* __concat_strings(struct __string *strA, struct __string *strB)
+{
+    struct __string* newString = __alloc_string();
+    size_t size = strA->length + strB->length;
+    uint8_t *buf = calloc(size, 1);
+    memcpy(buf, __get_buf_string(strA), strA->length);
+    memcpy(buf + strA->length, __get_buf_string(strB), strB->length);
+    __init_string(newString, buf, size, true);
+    return newString;
+}
+
 void __latte_std_printInt(int32_t n)
 {
-    fprintf(stdout, "%d", n);
+    fprintf(stdout, "%d\n", n);
 }
 
 void __latte_std_printString(struct __string *str)
 {
     fwrite(__get_buf_string(str), sizeof(uint8_t), str->length, stdout);
+    fprintf(stdout, "\n");
 }
 
 void __latte_std_error(void)

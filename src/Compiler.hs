@@ -311,6 +311,7 @@ generateCode = do
                                C.LLVMExternFunc C.latteString (func "__latte_std_readString") [],
 
                                C.LLVMExternFunc C.latteString (func "__alloc_string") [],
+                               C.LLVMExternFunc C.latteString (func "__concat_strings") [C.latteString, C.latteString],
                                C.LLVMExternFunc C.Void (func "__init_string") [C.latteString, C.Ptr(C.I8), C.I64, C.I1],
 
                                C.LLVMExternFunc C.Void (func "__latte_std_error") []]

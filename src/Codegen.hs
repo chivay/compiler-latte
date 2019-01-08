@@ -476,12 +476,17 @@ compileExpr (AST.Add op exp exp') = do
   e' <- compileExpr exp'
   r <- allocReg (getType e)
   case op of
-    AST.Plus -> do
-      emit $ Add r e e'
-      return r
+    AST.Plus -> if (getType e) == latteString
+                   then concatStrings r e e'
+                   else do
+                      emit $ Add r e e'
+                      return r
     AST.Minus -> do
       emit $ Sub r e e'
       return r
+  where concatStrings r e e' = do
+          emit $ Call r (LLVMGlobalIdent "__concat_strings") [e, e']
+          return r
 compileExpr (AST.Comp rop exp exp') = do
   p <- compileExpr exp
   q <- compileExpr exp'
