@@ -303,19 +303,19 @@ instance Pretty LLVMModule where
     vcat (pPrint <$> (_functions mod))
 
 data CodegenState = CodegenState
-  { _ast        :: AST.TopDef
-  , _nextLabel  :: Integer
-  , _nextIdent  :: Integer
-  , _nextGlobal :: Integer
-  , _initBlock  :: [LLVMIR]
-  , _blocks     :: M.Map LLVMLabel [LLVMIR]
-  , _globalDefs :: [LLVMGConst]
+  { _ast          :: AST.TopDef
+  , _nextLabel    :: Integer
+  , _nextIdent    :: Integer
+  , _nextGlobal   :: Integer
+  , _initBlock    :: [LLVMIR]
+  , _blocks       :: M.Map LLVMLabel [LLVMIR]
+  , _globalDefs   :: [LLVMGConst]
   , _currentBlock :: LLVMLabel
   }
 
 data CodegenEnv = CodegenEnv
-  { _varMap       :: M.Map AST.Ident LLVMValue
-  , _funcRet      :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
+  { _varMap  :: M.Map AST.Ident LLVMValue
+  , _funcRet :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
   } deriving (Show)
 
 type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
@@ -392,11 +392,12 @@ emit :: LLVMIR -> CodegenM ()
 emit ins = do
   block <- gets _currentBlock
   case block of
-    (LLVMLabel "init") -> modify (\s -> s {_initBlock = ins:(_initBlock s)})
-    _ -> modify
-           (\s ->
-             let newBlock = ins : ((_blocks s) M.! block)
-             in s {_blocks = M.insert block newBlock (_blocks s)})
+    (LLVMLabel "init") -> modify (\s -> s {_initBlock = ins : (_initBlock s)})
+    _ ->
+      modify
+        (\s ->
+           let newBlock = ins : ((_blocks s) M.! block)
+            in s {_blocks = M.insert block newBlock (_blocks s)})
 
 load :: AST.Ident -> CodegenM LLVMValue
 load name = do
@@ -477,17 +478,19 @@ compileExpr (AST.Add op exp exp') = do
   e' <- compileExpr exp'
   r <- allocReg (getType e)
   case op of
-    AST.Plus -> if (getType e) == latteString
-                   then concatStrings r e e'
-                   else do
-                      emit $ Add r e e'
-                      return r
+    AST.Plus ->
+      if (getType e) == latteString
+        then concatStrings r e e'
+        else do
+          emit $ Add r e e'
+          return r
     AST.Minus -> do
       emit $ Sub r e e'
       return r
-  where concatStrings r e e' = do
-          emit $ Call r (LLVMGlobalIdent "__concat_strings") [e, e']
-          return r
+  where
+    concatStrings r e e' = do
+      emit $ Call r (LLVMGlobalIdent "__concat_strings") [e, e']
+      return r
 compileExpr (AST.Comp rop exp exp') = do
   p <- compileExpr exp
   q <- compileExpr exp'
@@ -505,41 +508,35 @@ compileExpr (AST.Comp rop exp exp') = do
         , (AST.NEqual, Ne)
         ]
 compileExpr (AST.And exp exp') = do
-    loc <- allocLocalVar I1
-    doSecond <- newBlock
-    postBlock <- newBlock
-    store (LLVMConst I1 0) loc
-    p <- compileExpr exp
-    emit $ BrCond p doSecond postBlock
-
-    setCurrentBlock doSecond
-    r <- compileExpr exp'
-    store r loc
-    emit $ Br postBlock
-
-    setCurrentBlock postBlock
-    r <- allocReg I1
-    emit $ Load r loc
-    return r
-
+  loc <- allocLocalVar I1
+  doSecond <- newBlock
+  postBlock <- newBlock
+  store (LLVMConst I1 0) loc
+  p <- compileExpr exp
+  emit $ BrCond p doSecond postBlock
+  setCurrentBlock doSecond
+  r <- compileExpr exp'
+  store r loc
+  emit $ Br postBlock
+  setCurrentBlock postBlock
+  r <- allocReg I1
+  emit $ Load r loc
+  return r
 compileExpr (AST.Or exp exp') = do
-    loc <- allocLocalVar I1
-    doSecond <- newBlock
-    postBlock <- newBlock
-    store (LLVMConst I1 1) loc
-    p <- compileExpr exp
-    emit $ BrCond p postBlock doSecond
-
-    setCurrentBlock doSecond
-    r <- compileExpr exp'
-    store r loc
-    emit $ Br postBlock
-
-    setCurrentBlock postBlock
-    r <- allocReg I1
-    emit $ Load r loc
-    return r
-
+  loc <- allocLocalVar I1
+  doSecond <- newBlock
+  postBlock <- newBlock
+  store (LLVMConst I1 1) loc
+  p <- compileExpr exp
+  emit $ BrCond p postBlock doSecond
+  setCurrentBlock doSecond
+  r <- compileExpr exp'
+  store r loc
+  emit $ Br postBlock
+  setCurrentBlock postBlock
+  r <- allocReg I1
+  emit $ Load r loc
+  return r
 
 compileBinOp ::
      (LLVMValue -> LLVMValue -> LLVMValue -> LLVMIR)
@@ -600,22 +597,17 @@ compileStmt (AST.Loop exp stmt) = do
   bodyBlock <- newBlock
   postBlock <- newBlock
   emit $ Br condBlock
-
   setCurrentBlock condBlock
   r <- compileExpr exp
   emit $ BrCond r bodyBlock postBlock
-
   setCurrentBlock bodyBlock
   compileStmt stmt
   emit $ Br condBlock
-
   setCurrentBlock postBlock
   nop
-
 compileStmt (AST.Block stmts) = do
   compileStatements stmts
   nop
-
 compileStmt (AST.Incr var) =
   compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Var var) (AST.LitInt 1)))
 compileStmt (AST.Decr var) =
@@ -625,14 +617,11 @@ compileStmt (AST.If AST.LitFalse _) = nop
 compileStmt stmT@(AST.If exp stmt) = do
   bodyBlock <- newBlock
   postBlock <- newBlock
-
   r <- compileExpr exp
   emit $ BrCond r bodyBlock postBlock
-
   setCurrentBlock bodyBlock
   compileStmt stmt
   emit $ Br postBlock
-
   setCurrentBlock postBlock
   nop
 compileStmt (AST.IfElse AST.LitTrue stmt _) = compileStmt stmt
@@ -643,24 +632,21 @@ compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
   postBlock <- newBlock
   r <- compileExpr exp
   emit $ BrCond r trueBlock falseBlock
-
   setCurrentBlock trueBlock
   compileStmt stmt
   when (not $ willReturn stmtT) (emit $ Br postBlock)
-
   setCurrentBlock falseBlock
   compileStmt stmt'
   when (not $ willReturn stmtT) (emit $ Br postBlock)
   setCurrentBlock postBlock
   nop
-
 compileStmt (AST.ExpS exp) = do
   compileExpr exp
   nop
 
 setCurrentBlock :: LLVMLabel -> CodegenM ()
 setCurrentBlock l = do
-    modify (\s -> s {_currentBlock = l})
+  modify (\s -> s {_currentBlock = l})
 
 nop :: CodegenM CodegenEnv
 nop = do
@@ -685,8 +671,8 @@ compileStatements stmts = compileAll stmts
     compileAll (s:ss) = do
       env <- compileStmt s
       if willReturn s
-         then nop
-         else local (const env) (compileAll ss)
+        then nop
+        else local (const env) (compileAll ss)
     compileAll [] = nop
 
 mangleFunctionName :: AST.Ident -> AST.Ident
@@ -700,7 +686,7 @@ generateFirstBlock = do
   let fname' = mangleFunctionName fname
   args' <- mapM argRegAlloc args
   locs <- mapM allocLocalVar (getType <$> args')
-  mapM (\(r,addr) -> store r addr) (zip args' locs)
+  mapM (\(r, addr) -> store r addr) (zip args' locs)
   let vars = M.fromList (zip (removeTypes args) locs)
   return
     (env {_varMap = vars}, LLVMFuncDef rtyp' (LLVMGlobalIdent fname') args')
@@ -719,22 +705,24 @@ generateCode = do
   (startenv, def) <- generateFirstBlock
   (AST.TopDef rtype _ _ stmts) <- gets _ast
   entry <- newBlock
-  let stmts' = if rtype == AST.TVoid
-                  then stmts ++ [AST.Ret Nothing]
-                  else stmts
-
+  let stmts' =
+        if rtype == AST.TVoid
+          then stmts ++ [AST.Ret Nothing]
+          else stmts
   setCurrentBlock entry
   local (const $ startenv) (compileStatements stmts')
-
   initInsns <- gets _initBlock
   let initInsns' = (Br entry) : initInsns
   blocks <- (gets _blocks)
-  let blocks' = (\(l, insns) -> LLVMBlock l (reverse insns)) <$> pruneEmptyBlocks (M.toList blocks)
+  let blocks' =
+        (\(l, insns) -> LLVMBlock l (reverse insns)) <$>
+        pruneEmptyBlocks (M.toList blocks)
   return
     (LLVMFunction
        { _definition = def
        , _init = LLVMBlock (LLVMLabel "init") (reverse initInsns')
        , _fblocks = blocks'
        })
-  where pruneEmptyBlocks :: [(LLVMLabel, [LLVMIR])] -> [(LLVMLabel, [LLVMIR])]
-        pruneEmptyBlocks = filter (\(_, insns) -> not $ null insns)
+  where
+    pruneEmptyBlocks :: [(LLVMLabel, [LLVMIR])] -> [(LLVMLabel, [LLVMIR])]
+    pruneEmptyBlocks = filter (\(_, insns) -> not $ null insns)
