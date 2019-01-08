@@ -37,10 +37,11 @@ void __init_string(struct __string *str, uint8_t *buf, size_t length, bool move_
         bufptr = buf;
     } else {
         bufptr = calloc(length, sizeof(uint8_t));
+        memcpy(bufptr, buf, length);
     }
     if (bufptr == NULL)
         __panic("Out of memory!");
-    memcpy(bufptr, buf, length);
+    str->buf = bufptr;
 }
 
 
