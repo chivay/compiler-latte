@@ -592,7 +592,7 @@ compileStmt (AST.If exp stmt) = do
         local (setCurrentBlock lastBlock) (emit $ Br postBlock))
   env <- ask
   return (setCurrentBlock postBlock env)
-compileStmt (AST.IfElse exp stmt stmt') = do
+compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
   trueBlock <- newBlock
   falseBlock <- newBlock
   postBlock <- newBlock
@@ -602,12 +602,12 @@ compileStmt (AST.IfElse exp stmt stmt') = do
     (setCurrentBlock trueBlock)
     (do env' <- compileStmt stmt
         let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (emit $ Br postBlock))
+        local (setCurrentBlock lastBlock) (when (not $ willReturn stmtT) $ emit $ Br postBlock))
   local
     (setCurrentBlock falseBlock)
     (do env' <- compileStmt stmt'
         let lastBlock = _currentBlock env'
-        local (setCurrentBlock lastBlock) (emit $ Br postBlock))
+        local (setCurrentBlock lastBlock) (when (not $ willReturn stmtT) $ emit $ Br postBlock))
   env <- ask
   return (setCurrentBlock postBlock env)
 compileStmt (AST.ExpS exp) = do
@@ -622,6 +622,16 @@ nop = do
   env <- ask
   return env
 
+willReturn :: AST.Stmt -> Bool
+willReturn (AST.Ret _) = True
+willReturn (AST.ExpS (AST.Call "error" _)) = True
+willReturn (AST.Block stmts) = any willReturn stmts
+willReturn (AST.If AST.LitTrue stmt) = willReturn stmt
+willReturn (AST.IfElse AST.LitTrue stmt _) = willReturn stmt
+willReturn (AST.IfElse AST.LitFalse _ stmt) = willReturn stmt
+willReturn (AST.IfElse _ stmt stmt') = willReturn stmt && willReturn stmt'
+willReturn _ = False
+
 compileStatements :: [AST.Stmt] -> CodegenM CodegenEnv
 compileStatements stmts = compileAll stmts
   where
@@ -629,7 +639,9 @@ compileStatements stmts = compileAll stmts
     compileAll :: [AST.Stmt] -> CodegenM CodegenEnv
     compileAll (s:ss) = do
       env <- compileStmt s
-      local (const env) (compileAll ss)
+      if willReturn s
+         then nop
+         else local (const env) (compileAll ss)
     compileAll [] = nop
 
 mangleFunctionName :: AST.Ident -> AST.Ident
@@ -665,10 +677,12 @@ generateCode = do
   initInsns <- gets _initBlock
   let initInsns' = (Br entry) : initInsns
   blocks <- (gets _blocks)
-  let blocks' = (\(l, insns) -> LLVMBlock l (reverse insns)) <$> M.toList blocks
+  let blocks' = (\(l, insns) -> LLVMBlock l (reverse insns)) <$> pruneEmptyBlocks (M.toList blocks)
   return
     (LLVMFunction
        { _definition = def
        , _init = LLVMBlock (LLVMLabel "init") (reverse initInsns')
        , _fblocks = blocks'
        })
+  where pruneEmptyBlocks :: [(LLVMLabel, [LLVMIR])] -> [(LLVMLabel, [LLVMIR])]
+        pruneEmptyBlocks = filter (\(_, insns) -> not $ null insns)
