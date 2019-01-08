@@ -586,7 +586,9 @@ compileStmt (AST.Incr var) =
   compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Var var) (AST.LitInt 1)))
 compileStmt (AST.Decr var) =
   compileStmt (AST.Ass var (AST.Add AST.Minus (AST.Var var) (AST.LitInt 1)))
-compileStmt (AST.If exp stmt) = do
+compileStmt (AST.If AST.LitTrue stmt) = compileStmt stmt
+compileStmt (AST.If AST.LitFalse _) = nop
+compileStmt stmT@(AST.If exp stmt) = do
   bodyBlock <- newBlock
   postBlock <- newBlock
   r <- compileExpr exp
@@ -598,6 +600,8 @@ compileStmt (AST.If exp stmt) = do
         local (setCurrentBlock lastBlock) (emit $ Br postBlock))
   env <- ask
   return (setCurrentBlock postBlock env)
+compileStmt (AST.IfElse AST.LitTrue stmt _) = compileStmt stmt
+compileStmt (AST.IfElse AST.LitFalse _ stmt) = compileStmt stmt
 compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
   trueBlock <- newBlock
   falseBlock <- newBlock
@@ -678,9 +682,12 @@ generateFirstBlock = do
 generateCode :: CodegenM LLVMFunction
 generateCode = do
   (startenv, def) <- generateFirstBlock
-  (AST.TopDef _ _ _ stmts) <- gets _ast
+  (AST.TopDef rtype _ _ stmts) <- gets _ast
   entry <- newBlock
-  local (const $ startenv {_currentBlock = entry}) (compileStatements stmts)
+  let stmts' = if rtype == AST.TVoid
+                  then stmts ++ [AST.Ret Nothing]
+                  else stmts
+  local (const $ startenv {_currentBlock = entry}) (compileStatements stmts')
   initInsns <- gets _initBlock
   let initInsns' = (Br entry) : initInsns
   blocks <- (gets _blocks)
