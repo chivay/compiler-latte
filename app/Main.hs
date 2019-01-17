@@ -23,8 +23,8 @@ compileFile filename = do
         hPutStrLn stderr "ERROR"
         (failWithError . show) err
     Right program -> do
-        hPutStrLn stderr "OK"
         C.compileProgram program
+        hPutStrLn stderr "OK"
 
 main :: IO ()
 main = do
