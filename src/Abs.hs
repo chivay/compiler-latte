@@ -11,6 +11,8 @@ data Type
   | TVoid
   | TFunc Type
           [Type]
+  | TArray (Maybe Integer)
+           Type
   deriving (Eq, Show, Ord)
 
 data TypVar =
@@ -29,15 +31,23 @@ data TopDef =
          [Stmt]
   deriving (Eq, Show)
 
+data LValue
+  = Var Ident
+  | Indexed Expr
+            LValue
+  | Field Ident
+          LValue
+  deriving (Eq, Show)
+
 data Stmt
   = Empty
   | Block [Stmt]
   | Decl Type
          [DeclItem]
-  | Ass Ident
+  | Ass LValue
         Expr
-  | Incr Ident
-  | Decr Ident
+  | Incr LValue
+  | Decr LValue
   | Ret (Maybe Expr)
   | If Expr
        Stmt
@@ -55,7 +65,7 @@ data DeclItem =
   deriving (Eq, Show)
 
 data Expr
-  = Var Ident
+  = Mem LValue
   | LitInt Integer
   | LitTrue
   | LitFalse
@@ -77,6 +87,7 @@ data Expr
         Expr
   | Or Expr
        Expr
+  | New Type
   deriving (Eq, Show)
 
 data RelOp

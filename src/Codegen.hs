@@ -48,10 +48,14 @@ data LLVMType
   | String
   | Array Integer
           LLVMType
+  | Struct [LLVMType]
   deriving (Show, Eq)
 
 latteString :: LLVMType
 latteString = Ptr String
+
+makeLatteArray :: LLVMType -> LLVMType
+makeLatteArray t = Ptr $ Struct [I32, t]
 
 data LLVMGConst =
   LLVMStringConst LLVMValue
@@ -90,9 +94,6 @@ instance Pretty LLVMExternFunc where
     pPrint rtype <+>
     pPrint name <+> parens (hsep $ punctuate comma (pPrint <$> args))
 
-latteStringDef :: LLVMStructDef
-latteStringDef = LLVMStructDef (LLVMIdent "__string") [I64, Ptr I8, I32]
-
 instance Pretty LLVMType where
   pPrint I64           = "i64"
   pPrint I32           = "i32"
@@ -102,6 +103,7 @@ instance Pretty LLVMType where
   pPrint (Ptr typ)     = pPrint typ <> char '*'
   pPrint String        = "%__string"
   pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
+  pPrint (Struct ts)   = (braces . hcat) (punctuate comma (pPrint <$> ts))
 
 data LLVMValue
   = LLVMConst LLVMType
@@ -162,6 +164,10 @@ data LLVMIR
         LLVMValue
   | Bitcast LLVMValue
             LLVMValue
+  | Gep LLVMValue
+        LLVMValue
+        [LLVMValue]
+  | Comment T.Text
   deriving (Show, Eq)
 
 data CmpOp
@@ -193,6 +199,9 @@ getType :: LLVMValue -> LLVMType
 getType (LLVMConst t _)  = t
 getType (LLVMReg t _)    = t
 getType (LLVMGlobal t _) = t
+
+derefType :: LLVMType -> LLVMType
+derefType (Ptr t) = t
 
 instance Pretty LLVMIR where
   pPrint (Ret Nothing) = text "ret" <+> text "void"
@@ -238,6 +247,14 @@ instance Pretty LLVMIR where
     pPrint r <+>
     char '=' <+>
     text "bitcast" <+> printWithType s <+> text "to" <+> printType r
+  pPrint (Gep r s idxs) =
+    pPrint r <+>
+    char '=' <+>
+    text "getelementptr" <+>
+    (pPrint . derefType . getType) s <> char ',' <+>
+    printWithType s <> char ',' <+>
+    (hsep $ punctuate comma (printWithType <$> idxs))
+  pPrint (Comment comment) = text "//" <+> text (T.unpack comment)
 
 printType :: LLVMValue -> Doc
 printType = pPrint . getType
@@ -314,7 +331,7 @@ data CodegenState = CodegenState
   }
 
 data CodegenEnv = CodegenEnv
-  { _varMap  :: M.Map AST.Ident LLVMValue
+  { _varMap  :: M.Map AST.Ident (LLVMValue, AST.Type)
   , _funcRet :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
   } deriving (Show)
 
@@ -357,12 +374,28 @@ newIdent = do
   where
     newIdent l = (T.pack (show l))
 
-getAddr :: AST.Ident -> CodegenM LLVMValue
-getAddr name = do
+getAddr :: AST.LValue -> CodegenM LLVMValue
+getAddr (AST.Var name) = do
   r <- asks ((M.lookup name) . _varMap)
   case r of
-    Just val -> return val
-    Nothing  -> throwError $ CodegenError (show name)
+    Just (val, _) -> return val
+    Nothing       -> throwError $ CodegenError (show name)
+getAddr (AST.Indexed expr lvalue) = do
+  offset <- compileExpr expr
+  arrPtr <- load lvalue
+  r <- allocReg (Ptr I8)
+  let subT = ((getElemType.getType) arrPtr)
+  res <- allocReg subT
+  emit $ Bitcast r arrPtr
+  rPtr <- allocReg (Ptr I8)
+  emit $ Call rPtr (LLVMGlobalIdent "__get_array_buffer") [r]
+  cPtr <- allocReg (Ptr ((getElemType.getType) arrPtr))
+  emit $ Bitcast cPtr rPtr
+  resAddr <- allocReg (Ptr subT)
+  emit $ Gep resAddr cPtr [offset]
+  return resAddr
+  where
+    getElemType (Ptr (Struct (I32:t:[]))) = t
 
 allocReg :: LLVMType -> CodegenM LLVMValue
 allocReg typ = do
@@ -399,15 +432,36 @@ emit ins = do
            let newBlock = ins : ((_blocks s) M.! block)
             in s {_blocks = M.insert block newBlock (_blocks s)})
 
-load :: AST.Ident -> CodegenM LLVMValue
-load name = do
-  addr <- getAddr name
+load :: AST.LValue -> CodegenM LLVMValue
+load (AST.Field "length" arr) = do
+  ref <- load arr
+  res <- allocReg I32
+  ptr <- allocReg (Ptr I8)
+  emit $ Bitcast ptr ref
+  emit $ Call res (LLVMGlobalIdent "__get_array_length") [ptr]
+  return res
+load (AST.Indexed expr lvalue) = do
+  offset <- compileExpr expr
+  arrPtr <- load lvalue
+  r <- allocReg (Ptr I8)
+  let subT = ((getElemType . getType) arrPtr)
+  res <- allocReg subT
+  emit $ Bitcast r arrPtr
+  rPtr <- allocReg (Ptr I8)
+  emit $ Call rPtr (LLVMGlobalIdent "__get_array_buffer") [r]
+  cPtr <- allocReg (Ptr ((getElemType . getType) arrPtr))
+  emit $ Bitcast cPtr rPtr
+  resAddr <- allocReg (Ptr subT)
+  emit $ Gep resAddr cPtr [offset]
+  emit $ Load res resAddr
+  return res
+  where
+    getElemType (Ptr (Struct (I32:t:[]))) = t
+load lval = do
+  addr <- getAddr lval
   res <- allocReg ((derefType . getType) addr)
   emit $ Load res addr
   return res
-  where
-    derefType :: LLVMType -> LLVMType
-    derefType (Ptr t) = t
 
 allocStringConst :: T.Text -> CodegenM LLVMValue
 allocStringConst txt = do
@@ -428,7 +482,9 @@ allocStringConst txt = do
     buf = E.encodeUtf8 txt
 
 compileExpr :: AST.Expr -> CodegenM LLVMValue
-compileExpr (AST.Var name) = load name
+compileExpr expr@(AST.Mem lvalue) = do
+  val <- load lvalue
+  return val
 compileExpr (AST.LitInt n) = allocConst n
 compileExpr (AST.LitString txt) = do
   stringPtr <- allocReg latteString
@@ -537,6 +593,21 @@ compileExpr (AST.Or exp exp') = do
   r <- allocReg I1
   emit $ Load r loc
   return r
+compileExpr (AST.New (AST.TArray (Just size) arrType)) = do
+  arr <- allocReg (Ptr I8)
+  res <- allocReg (makeLatteArray baseType)
+  arrSize <- allocConst size
+  elemSize <- allocConst baseTypeSize
+  emit $ Call arr (LLVMGlobalIdent "__alloc_array") [arrSize, elemSize]
+  emit $ Bitcast res arr
+  return res
+  where
+    baseType = getLLVMType arrType
+    baseTypeSize =
+      case arrType of
+        AST.TInteger -> 4
+        AST.TBool    -> 1
+        AST.TString  -> 8
 
 compileBinOp ::
      (LLVMValue -> LLVMValue -> LLVMValue -> LLVMIR)
@@ -553,25 +624,23 @@ compileBinOp opcode exp exp' = do
 store :: LLVMValue -> LLVMValue -> CodegenM ()
 store val addr = emit $ Store val addr
 
-llvmTypeMap :: M.Map AST.Type LLVMType
-llvmTypeMap =
-  M.fromList
-    [ (AST.TInteger, I32)
-    , (AST.TBool, I1)
-    , (AST.TVoid, Void)
-    , (AST.TString, Ptr String)
-    ]
+getLLVMType :: AST.Type -> LLVMType
+getLLVMType AST.TInteger     = I32
+getLLVMType AST.TBool        = I1
+getLLVMType AST.TVoid        = Void
+getLLVMType AST.TString      = Ptr String
+getLLVMType (AST.TArray _ t) = makeLatteArray (getLLVMType t)
 
 compileStmt :: AST.Stmt -> CodegenM CodegenEnv
 compileStmt AST.Empty = nop
-compileStmt (AST.Ass vname expr) = do
-  addr <- getAddr vname
+compileStmt (AST.Ass lvalue expr) = do
+  addr <- getAddr lvalue
   r <- compileExpr expr
   emit $ Store r addr
   nop
 -- REFACTOR THIS
 compileStmt (AST.Decl typ items) = do
-  let t = (M.!) llvmTypeMap typ
+  let t = getLLVMType typ
   locs <- mapM allocLocalVar (replicate (length items) t)
   let items' = (\(AST.DeclItem ident mexp) -> (ident, mexp)) <$> items
   let idents = fst <$> items'
@@ -580,10 +649,11 @@ compileStmt (AST.Decl typ items) = do
           AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
           AST.TBool    -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
           AST.TString  -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
+          _            -> catMaybes $ (snd <$> items')
   results <- mapM compileExpr mexprs
   mapM_ (\(val, addr) -> store val addr) (zip results locs)
   env <- ask
-  let newVars = M.fromList (zip idents locs)
+  let newVars = M.fromList (zip idents (zip locs (replicate (length locs) typ)))
   return $ env {_varMap = (M.union newVars (_varMap env))}
 compileStmt (AST.Ret Nothing) = do
   emit $ Ret Nothing
@@ -609,9 +679,9 @@ compileStmt (AST.Block stmts) = do
   compileStatements stmts
   nop
 compileStmt (AST.Incr var) =
-  compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Var var) (AST.LitInt 1)))
+  compileStmt (AST.Ass var (AST.Add AST.Plus (AST.Mem var) (AST.LitInt 1)))
 compileStmt (AST.Decr var) =
-  compileStmt (AST.Ass var (AST.Add AST.Minus (AST.Var var) (AST.LitInt 1)))
+  compileStmt (AST.Ass var (AST.Add AST.Minus (AST.Mem var) (AST.LitInt 1)))
 compileStmt (AST.If AST.LitTrue stmt) = compileStmt stmt
 compileStmt (AST.If AST.LitFalse _) = nop
 compileStmt stmT@(AST.If exp stmt) = do
@@ -682,23 +752,24 @@ generateFirstBlock :: CodegenM (CodegenEnv, LLVMFuncDef)
 generateFirstBlock = do
   (AST.TopDef rtype fname args _) <- gets _ast
   env <- ask
-  let rtyp' = (M.!) llvmTypeMap rtype
+  let rtyp' = getLLVMType rtype
   let fname' = mangleFunctionName fname
   args' <- mapM argRegAlloc args
   locs <- mapM allocLocalVar (getType <$> args')
   mapM (\(r, addr) -> store r addr) (zip args' locs)
-  let vars = M.fromList (zip (removeTypes args) locs)
+  let (types, idents) = unpackArgs args
+  let vars = M.fromList (zip idents (zip locs types))
   return
     (env {_varMap = vars}, LLVMFuncDef rtyp' (LLVMGlobalIdent fname') args')
   where
     argRegAlloc :: AST.TypVar -> CodegenM LLVMValue
     argRegAlloc (AST.TypVar typ ident) = do
-      let t = (M.!) llvmTypeMap typ
+      let t = getLLVMType typ
       allocReg t
-    removeTypes :: [AST.TypVar] -> [AST.Ident]
-    removeTypes = fmap unpack
+    unpackArgs :: [AST.TypVar] -> ([AST.Type], [AST.Ident])
+    unpackArgs args = unzip $ fmap unpack args
       where
-        unpack (AST.TypVar _ t) = t
+        unpack (AST.TypVar t i) = (t, i)
 
 generateCode :: CodegenM LLVMFunction
 generateCode = do

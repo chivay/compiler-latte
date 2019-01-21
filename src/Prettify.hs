@@ -21,17 +21,26 @@ instance Pretty TopDef where
 
 instance Pretty Type where
   pPrint TInteger = "int"
-  pPrint TString  = "string"
-  pPrint TBool    = "boolean"
-  pPrint TVoid    = "void"
+  pPrint TString = "string"
+  pPrint TBool = "boolean"
+  pPrint TVoid = "void"
+  pPrint (TArray (Just size) t) =
+    pPrint t <> char '[' <> pPrint size <> char ']'
+  pPrint (TArray Nothing t) = pPrint t <> brackets Text.PrettyPrint.empty
+
+instance Pretty LValue where
+  pPrint (Var ident)        = pPrint ident
+  pPrint (Indexed exp base) = pPrint base <> brackets (pPrint exp)
+  pPrint (Field field base) = pPrint base <> char '.' <> pPrint field
 
 instance Pretty Expr where
-  pPrint (Var ident) = pPrint ident
+  pPrint (Mem lval) = pPrint lval
   pPrint (LitInt n) = pPrint n
   pPrint LitTrue = "true"
   pPrint LitFalse = "false"
   pPrint (Call name args) =
     pPrint name <> parens (hsep $ punctuate comma (pPrint <$> args))
+  pPrint (New typ) = text "new" <+> pPrint typ
   pPrint (LitString str) = doubleQuotes $ pPrint str
   pPrint (Neg expr) = char '-' <> parens (pPrint expr)
   pPrint (Not expr) = char '!' <> parens (pPrint expr)

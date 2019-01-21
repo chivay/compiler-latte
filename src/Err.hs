@@ -16,6 +16,7 @@ data CompileError
   | UndefinedVariableError AST.Ident
   | InvalidTypeError AST.Ident
   | ReturnPathError
+  | UninitializedError
   | StmtLocatedError AST.Stmt
                      CompileError
   | CodegenError String

@@ -6,6 +6,11 @@
 #include <sys/types.h>
 #include <signal.h>
 
+struct __array {
+    int32_t length;
+    void *buffer;
+};
+
 struct __string {
     size_t length;
     union {
@@ -20,6 +25,32 @@ void __panic(const char *msg)
     puts("Unrecoverable error:");
     puts(msg);
     abort();
+}
+
+struct __array *__alloc_array(int32_t nitems, int32_t el_size)
+{
+    struct __array *arr = malloc(sizeof (struct __array));
+    if (arr == NULL) {
+        __panic("Out of memory");
+    }
+    arr->length = nitems;
+
+    arr->buffer = calloc(nitems, el_size);
+    if (arr->buffer == NULL) {
+        __panic("Out of memory");
+    }
+
+    return arr;
+}
+
+void *__get_array_buffer(struct __array *arr)
+{
+    return arr->buffer;
+}
+
+int32_t __get_array_length(struct __array *arr)
+{
+    return arr->length;
 }
 
 void __init_string(struct __string *str, uint8_t *buf, size_t length, bool move_buffer)

@@ -29,6 +29,7 @@ languageDef =
         , "boolean"
         , "void"
         , "return"
+        , "new"
         ]
     , Token.reservedOpNames =
         [ "+"
@@ -62,6 +63,8 @@ parens = Token.parens lexer
 
 braces = Token.braces lexer
 
+brackets = Token.brackets lexer
+
 integer = Token.integer lexer
 
 semi = Token.semi lexer
@@ -78,12 +81,44 @@ ident :: Parser T.Text
 ident = fmap T.pack identifier
 
 typ :: Parser Type
-typ = typInteger <|> typString <|> typBool <|> typVoid
+typ = do
+  t <- simpleType
+  x <- many $ brackets $ return ()
+  let wrapped = foldl (\t _ -> TArray Nothing t) t x
+  return wrapped
   where
     typInteger = reserved "int" >> return TInteger
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
     typVoid = reserved "void" >> return TVoid
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+
+initType :: Parser Type
+initType = do
+  t <- simpleType
+  sizes <- many $ brackets integer
+  let wrapped = foldl (\t n -> TArray (Just n) t) t sizes
+  return wrapped
+  where
+    typInteger = reserved "int" >> return TInteger
+    typString = reserved "string" >> return TString
+    typBool = reserved "boolean" >> return TBool
+    typVoid = reserved "void" >> return TVoid
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+
+lValue :: Parser LValue
+lValue = do
+  base <- ident
+  cont <- (many . choice) [fieldAccess, indexedAccess]
+  return $ foldl (\a i -> i a) (Var base) cont
+  where
+    fieldAccess = do
+      char '.'
+      field <- ident
+      return (Field field)
+    indexedAccess = do
+      expr <- brackets expr
+      return (Indexed expr)
 
 stmt :: Parser Stmt
 stmt =
@@ -99,14 +134,14 @@ stmt =
 incStmt :: Parser Stmt
 incStmt =
   try
-    (do var <- ident
+    (do var <- lValue
         reservedOp "++"
         return $ Incr var)
 
 decStmt :: Parser Stmt
 decStmt =
   try
-    (do var <- ident
+    (do var <- lValue
         reservedOp "--"
         return $ Decr var)
 
@@ -160,7 +195,10 @@ expr = buildExpressionParser operators terms
       fmap (LitString . T.pack) stringLiteral <|>
       (reserved "true" >> return LitTrue) <|>
       (reserved "false" >> return LitFalse) <|>
-      fmap Var ident
+      (do reserved "new"
+          t <- initType
+          return (New t)) <|>
+      fmap Mem lValue
     functionCall = do
       name <- ident
       args <- parens (commaSep expr)
@@ -190,7 +228,7 @@ assStmt :: Parser Stmt
 assStmt = do
   var <-
     try
-      (do var <- ident
+      (do var <- lValue
           reserved "="
           return var)
   Ass var <$> expr

@@ -1,4 +1,5 @@
-STACK=/home/students/inf/PUBLIC/MRJP/Stack/stack
+#STACK=/home/students/inf/PUBLIC/MRJP/Stack/stack
+STACK=stack
 all: runtime
 	$(STACK) setup
 	$(STACK) build
