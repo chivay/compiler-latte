@@ -177,6 +177,15 @@ checkFunctions = do
           when (etype /= AST.TBool) (throwError $ InvalidTypeError "not a bool")
           checkStmt stmt
           id
+        checkStmt (Foreach (TypVar typ ident) arr stmt) = do
+            arrT <- checkExpr arr
+            when ((not.isArray) arrT) (throwError $ InvalidTypeError "only arrays are iterable")
+            let (TArray _ elT) = arrT
+            when (elT /= typ) (throwError $ InvalidTypeError "conflicting types")
+            id
+            where isArray (TArray _ _ ) = True
+                  isArray _ = False
+
         checkStmt (ExpS expr) = do
           checkExpr expr
           id

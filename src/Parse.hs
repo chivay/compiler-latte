@@ -260,7 +260,7 @@ foreachStmt = do
     lexeme $ char '('
     iter <- typVar
     lexeme $ char ':'
-    arr <- ident
+    arr <- expr
     lexeme $ char ')'
     s <- stmt
     return $ Foreach iter arr s

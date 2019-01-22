@@ -714,6 +714,58 @@ compileStmt stmtT@(AST.IfElse exp stmt stmt') = do
 compileStmt (AST.ExpS exp) = do
   compileExpr exp
   nop
+compileStmt (AST.Foreach (AST.TypVar typ ident) arr stmt) = do
+  value <- allocLocalVar (getLLVMType typ)
+  iterator <- allocLocalVar I32
+  zero <- allocConst 0
+  -- initalize
+  emit $ Store zero iterator
+  arrPtr <- compileExpr arr
+  ptr <- allocReg (Ptr I8)
+  emit $ Bitcast ptr arrPtr
+  length <- allocReg I32
+  emit $ Call length (LLVMGlobalIdent "__get_array_length") [ptr]
+  rPtr <- allocReg (Ptr I8)
+  emit $ Call rPtr (LLVMGlobalIdent "__get_array_buffer") [ptr]
+  cPtr <- allocReg (Ptr ((getElemType . getType) arrPtr))
+  emit $ Bitcast cPtr rPtr
+
+  -- compile rest
+  condBlock <- newBlock
+  bodyBlock <- newBlock
+  postBlock <- newBlock
+  emit $ Br condBlock
+
+  setCurrentBlock condBlock
+  j <- allocReg I32
+  emit $ Load j iterator
+  cmpRes <- allocReg I1
+  emit $ ICmp Slt cmpRes j length
+  emit $ BrCond cmpRes bodyBlock postBlock
+
+  setCurrentBlock bodyBlock
+  k <- allocReg I32
+  v <- allocReg ((getElemType . getType) arrPtr)
+  emit $ Load k iterator
+  elemAddr <- allocReg (Ptr ((getElemType . getType) arrPtr))
+  emit $ Gep elemAddr cPtr [k]
+  emit $ Load v elemAddr
+  emit $ Store v value
+  local (\env -> env {_varMap = M.union (M.singleton ident (value, typ)) (_varMap env)}) (compileStmt stmt)
+
+  -- increment iterator
+  i <- allocReg I32
+  ip <- allocReg I32
+  one <- allocConst 1
+  emit $ Load i iterator
+  emit $ Add ip i one
+  emit $ Store ip iterator
+  emit $ Br condBlock
+
+  setCurrentBlock postBlock
+  nop
+  where
+    getElemType (Ptr (Struct (I32:t:[]))) = t
 
 setCurrentBlock :: LLVMLabel -> CodegenM ()
 setCurrentBlock l = do
