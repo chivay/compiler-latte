@@ -205,10 +205,13 @@ expr = buildExpressionParser operators terms
         ]
       ]
     terms =
-      (try $ do target <- parens ident
-                e <- expr
-                return (Cast target e)) <|>
-      (try $ parens expr) <|> try functionCall <|> fmap LitInt integer <|>
+      (try $ do
+         target <- parens ident
+         e <- expr
+         return (Cast target e)) <|>
+      (try $ parens expr) <|>
+      try functionCall <|>
+      fmap LitInt integer <|>
       fmap (LitString . T.pack) stringLiteral <|>
       (reserved "true" >> return LitTrue) <|>
       (reserved "false" >> return LitFalse) <|>

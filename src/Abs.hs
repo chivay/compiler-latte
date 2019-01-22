@@ -73,7 +73,8 @@ data DeclItem =
 
 data Expr
   = Mem LValue
-  | Cast Ident Expr
+  | Cast Ident
+         Expr
   | LitInt Integer
   | LitTrue
   | LitFalse

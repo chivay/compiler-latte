@@ -512,6 +512,9 @@ compileExpr :: AST.Expr -> CodegenM LLVMValue
 compileExpr expr@(AST.Mem lvalue) = do
   val <- load lvalue
   return val
+compileExpr (AST.Cast target AST.Null) = do
+  let nullT = getLLVMType (AST.TStruct target)
+  return $ LLVMNull nullT
 compileExpr (AST.LitInt n) = allocConst n
 compileExpr (AST.LitString txt) = do
   stringPtr <- allocReg latteString

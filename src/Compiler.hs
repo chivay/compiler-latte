@@ -236,6 +236,13 @@ checkTopDefinitions = do
         checkExpr (Mem lvalue) = do
           typ <- resolveLValue lvalue
           return typ
+        checkExpr (Cast target Null) = do
+          let typ = (TStruct target)
+          typeOk <- isLegalTypeExpr typ
+          when (not typeOk) $ throwError $ UndefinedType typ
+          return typ
+        checkExpr (Cast _ _) =
+          throwError $ InvalidCastError "Unable to cast type"
         checkExpr (LitInt _) = return AST.TInteger
         checkExpr LitTrue = return AST.TBool
         checkExpr LitFalse = return AST.TBool
@@ -278,6 +285,28 @@ checkTopDefinitions = do
           return t
         checkExpr (Add _ exp exp') =
           checkBinOp AST.TInteger [AST.TInteger] exp exp'
+        checkExpr (Comp Equal exp exp') = do
+          let eqTypes = [AST.TInteger, AST.TBool, AST.TString]
+          t <- checkExpr exp
+          t' <- checkExpr exp'
+          when (t /= t') $ throwError $ InvalidTypeError "conflicting types"
+          unless (elem t eqTypes || isObject t) $
+            throwError $ InvalidTypeError "not supported"
+          return TBool
+          where
+            isObject (TStruct _) = True
+            isObject _           = False
+        checkExpr (Comp NEqual exp exp') = do
+          let eqTypes = [AST.TInteger, AST.TBool, AST.TString]
+          t <- checkExpr exp
+          t' <- checkExpr exp'
+          when (t /= t') $ throwError $ InvalidTypeError "conflicting types"
+          unless (elem t eqTypes || isObject t) $
+            throwError $ InvalidTypeError "not supported"
+          return TBool
+          where
+            isObject (TStruct _) = True
+            isObject _           = False
         checkExpr (Comp _ exp exp') =
           checkBinOp AST.TBool [AST.TInteger, AST.TBool] exp exp'
         checkExpr (And exp exp') = checkBinOp AST.TBool [AST.TBool] exp exp'
