@@ -94,7 +94,10 @@ typ = do
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
     typVoid = reserved "void" >> return TVoid
-    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+    typStruct = do
+        id <- ident
+        return $ TStruct id
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid <|> typStruct
 
 initType :: Parser Type
 initType = do

@@ -11,9 +11,11 @@ import           Text.PrettyPrint.HughesPJClass
 data CompileError
   = TypeError T.Text
   | FunctionRedefinitionError T.Text
+  | StructRedefinitionError T.Text
   | RedefinitionError
   | UndefinedFunctionError AST.Ident
   | UndefinedVariableError AST.Ident
+  | UndefinedType AST.Type
   | InvalidTypeError AST.Ident
   | ReturnPathError
   | UninitializedError

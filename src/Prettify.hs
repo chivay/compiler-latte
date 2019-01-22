@@ -31,6 +31,7 @@ instance Pretty Type where
   pPrint (TArray (Just size) t) =
     pPrint t <> char '[' <> pPrint size <> char ']'
   pPrint (TArray Nothing t) = pPrint t <> brackets Text.PrettyPrint.empty
+  pPrint (TStruct ident) = pPrint ident
 
 instance Pretty LValue where
   pPrint (Var ident)        = pPrint ident

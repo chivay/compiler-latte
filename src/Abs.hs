@@ -1,6 +1,7 @@
 module Abs where
 
 import qualified Data.Text as T
+import qualified Data.Map as M
 
 type Ident = T.Text
 
@@ -13,6 +14,7 @@ data Type
           [Type]
   | TArray (Maybe Expr)
            Type
+  | TStruct Ident
   deriving (Eq, Show)
 
 data TypVar =

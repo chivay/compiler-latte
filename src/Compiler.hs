@@ -27,6 +27,7 @@ data CompilerState = CompilerState
   , _src      :: T.Text
   , _ast      :: AST.Program
   , _topDefs  :: M.Map Ident Type
+  , _strDefs  :: M.Map Ident (M.Map Ident Type)
   , _code     :: Maybe C.LLVMModule
   } deriving (Eq, Show)
 
@@ -62,17 +63,37 @@ loadTopDefinitions = do
       where
         ftype = AST.TFunc rtype (removeIdents args)
         insertFunc s = s {_topDefs = M.insert ident ftype (_topDefs s)}
+    addDef (StructDef ident body) = do
+      strs <- gets _strDefs
+      if M.member ident strs
+        then throwError (StructRedefinitionError ident)
+        else modify insertStruct
+      where
+        stype = M.fromList fields
+        fields = (\(TypVar t i) -> (i, t)) <$> body
+        insertStruct s = s {_strDefs = M.insert ident stype (_strDefs s)}
 
 assignCompatible :: Type -> Type -> Bool
 assignCompatible (TArray _ subT) (TArray _ subT') = assignCompatible subT subT'
 assignCompatible t t' = t == t'
 
-checkFunctions :: CompilerM ()
-checkFunctions = do
+checkTopDefinitions :: CompilerM ()
+checkTopDefinitions = do
   (AST.Program tds) <- gets _ast
   forM_ tds checkDef
   where
+    isLegalType :: Type -> CompilerM Bool
+    isLegalType (AST.TStruct ident) = do
+        strs <- gets _strDefs
+        return $ ident `M.member` strs
+    isLegalType _ = return True
+
     checkDef :: AST.TopDef -> CompilerM ()
+    checkDef (AST.StructDef sname fields) = mapM_ checkField fields
+      where checkField (TypVar t ident) = do
+              typeOk <- isLegalType t
+              when (not typeOk) $ throwError $ UndefinedType t
+              return()               -- TODO
     checkDef (AST.FuncDef rtype fname args body) = do
       tds <- gets _topDefs
       let initVars =
@@ -429,8 +450,7 @@ compileProgram prog = do
       printString "Loading functions definitions..."
       loadTopDefinitions
       printString "Typechecking functions..."
-      checkFunctions
-      printString "Typechecking main..."
+      checkTopDefinitions
       printString "Checking return paths..."
       checkReturnPaths
       printString "Generating code..."
@@ -443,6 +463,7 @@ compileProgram prog = do
         , _src = "somethin"
         , _ast = prog
         , _topDefs = initialDefinitions
+        , _strDefs = M.empty
         , _code = Nothing
         }
     initialDefinitions =
