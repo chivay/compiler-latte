@@ -49,6 +49,7 @@ data LLVMType
   | Array Integer
           LLVMType
   | Struct [LLVMType]
+  | Extern T.Text
   deriving (Show, Eq)
 
 latteString :: LLVMType
@@ -104,6 +105,7 @@ instance Pretty LLVMType where
   pPrint String        = "%__string"
   pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
   pPrint (Struct ts)   = (braces . hcat) (punctuate comma (pPrint <$> ts))
+  pPrint (Extern name) = pPrint $ "%latte_obj_" `T.append` name
 
 data LLVMValue
   = LLVMConst LLVMType
@@ -608,6 +610,10 @@ compileExpr (AST.New (AST.TArray (Just size) arrType)) = do
         AST.TInteger -> 4
         AST.TBool    -> 1
         AST.TString  -> 8
+--compileExpr (AST.New (AST.TStruct sname)) = do
+--    return ()
+
+
 
 compileBinOp ::
      (LLVMValue -> LLVMValue -> LLVMValue -> LLVMIR)
@@ -630,6 +636,7 @@ getLLVMType AST.TBool        = I1
 getLLVMType AST.TVoid        = Void
 getLLVMType AST.TString      = Ptr String
 getLLVMType (AST.TArray _ t) = makeLatteArray (getLLVMType t)
+getLLVMType (AST.TStruct name) = Ptr $ Extern name
 
 compileStmt :: AST.Stmt -> CodegenM CodegenEnv
 compileStmt AST.Empty = nop

@@ -413,8 +413,9 @@ compileFunction td = do
 
 generateCode :: CompilerM ()
 generateCode = do
-  (AST.Program tds) <- gets _ast
-  output <- mapM compileFunction tds
+  f <- gets _fnBodies
+  objectDefs <- gets _strDefs
+  output <- mapM compileFunction (snd <$> M.toList f)
   let funcs = fst <$> output
   let globals = foldl (++) [] (snd <$> output)
   let mod =
@@ -459,12 +460,16 @@ generateCode = do
               [ C.LLVMStructDef
                   (C.LLVMIdent "__string")
                   [C.I64, C.Ptr (C.I8), C.I32]
-              ]
+              ] ++ (objToLLVM <$> M.toList objectDefs)
           }
   liftIO $ (print . pPrint) mod
   return ()
   where
     func = C.LLVMGlobalIdent
+    objToLLVM :: (Ident, (M.Map Ident Type)) -> C.LLVMStructDef
+    objToLLVM (name, fields) = C.LLVMStructDef (C.LLVMIdent $ mangleIdent name) typFields
+        where mangleIdent name = "latte_obj_" `T.append` name
+              typFields = C.getLLVMType <$> snd <$> M.toList fields
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do
