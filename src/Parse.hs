@@ -31,6 +31,7 @@ languageDef =
         , "return"
         , "new"
         , "for"
+        , "null"
         ]
     , Token.reservedOpNames =
         [ "+"
@@ -94,19 +95,26 @@ typ = do
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
     typVoid = reserved "void" >> return TVoid
-    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+    typStruct = do
+      id <- ident
+      return $ TStruct id
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid <|> typStruct
 
 initType :: Parser Type
 initType = do
   t <- simpleType
-  size <- brackets expr
-  return (TArray (Just size) t)
+  x <- many $ brackets expr
+  let wrapped = foldl (\t p -> TArray (Just p) t) t x
+  return wrapped
   where
     typInteger = reserved "int" >> return TInteger
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
     typVoid = reserved "void" >> return TVoid
-    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+    typStruct = do
+      id <- ident
+      return $ TStruct id
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid <|> typStruct
 
 lValue :: Parser LValue
 lValue = do
@@ -197,10 +205,17 @@ expr = buildExpressionParser operators terms
         ]
       ]
     terms =
-      parens expr <|> try functionCall <|> fmap LitInt integer <|>
+      (try $ do
+         target <- parens ident
+         e <- expr
+         return (Cast target e)) <|>
+      (try $ parens expr) <|>
+      try functionCall <|>
+      fmap LitInt integer <|>
       fmap (LitString . T.pack) stringLiteral <|>
       (reserved "true" >> return LitTrue) <|>
       (reserved "false" >> return LitFalse) <|>
+      (reserved "null" >> return Null) <|>
       (do reserved "new"
           t <- initType
           return (New t)) <|>
@@ -274,13 +289,26 @@ typVar = do
   TypVar t <$> ident
 
 topDef :: Parser TopDef
-topDef = do
-  whitespace
-  t <- typ
-  name <- ident
-  args <- parens (commaSep typVar)
-  (Block stmts) <- blockStmt
-  return $ TopDef t name args stmts
+topDef = choice [funcDef, structDef]
+  where
+    funcDef = do
+      whitespace
+      t <- typ
+      name <- ident
+      args <- parens (commaSep typVar)
+      (Block stmts) <- blockStmt
+      return $ FuncDef t name args stmts
+    structDef = do
+      whitespace
+      reserved "class"
+      structName <- ident
+      decls <- braces (many fieldDecl)
+      return $ StructDef structName decls
+      where
+        fieldDecl = do
+          field <- typVar
+          semi
+          return $ field
 
 program :: Parser Program
 program = Program <$> many topDef <* eof

@@ -1,5 +1,6 @@
 module Abs where
 
+import qualified Data.Map  as M
 import qualified Data.Text as T
 
 type Ident = T.Text
@@ -13,6 +14,7 @@ data Type
           [Type]
   | TArray (Maybe Expr)
            Type
+  | TStruct Ident
   deriving (Eq, Show)
 
 data TypVar =
@@ -24,11 +26,13 @@ newtype Program =
   Program [TopDef]
   deriving (Eq, Show)
 
-data TopDef =
-  TopDef Type
-         Ident
-         [TypVar]
-         [Stmt]
+data TopDef
+  = FuncDef Type
+            Ident
+            [TypVar]
+            [Stmt]
+  | StructDef Ident
+              [TypVar]
   deriving (Eq, Show)
 
 data LValue
@@ -69,9 +73,12 @@ data DeclItem =
 
 data Expr
   = Mem LValue
+  | Cast Ident
+         Expr
   | LitInt Integer
   | LitTrue
   | LitFalse
+  | Null
   | Call Ident
          [Expr]
   | LitString T.Text

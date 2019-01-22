@@ -13,11 +13,15 @@ instance Pretty T.Text where
   pPrint ident = text $ T.unpack ident
 
 instance Pretty TopDef where
-  pPrint (TopDef typ name args stmts) = blockPack funcHeader body
+  pPrint (FuncDef typ name args stmts) = blockPack funcHeader body
     where
       funcHeader = pPrint typ <+> pPrint name <> lparen <> header <> rparen
       header = hsep $ punctuate comma (pPrint <$> args)
       body = vcat $ pPrint <$> stmts
+  pPrint (StructDef name fields) =
+    blockPack
+      (text "class" <+> pPrint name)
+      (vcat $ (<> semi) <$> pPrint <$> fields)
 
 instance Pretty Type where
   pPrint TInteger = "int"
@@ -27,6 +31,7 @@ instance Pretty Type where
   pPrint (TArray (Just size) t) =
     pPrint t <> char '[' <> pPrint size <> char ']'
   pPrint (TArray Nothing t) = pPrint t <> brackets Text.PrettyPrint.empty
+  pPrint (TStruct ident) = pPrint ident
 
 instance Pretty LValue where
   pPrint (Var ident)        = pPrint ident
@@ -35,6 +40,8 @@ instance Pretty LValue where
 
 instance Pretty Expr where
   pPrint (Mem lval) = pPrint lval
+  pPrint Null = "null"
+  pPrint (Cast to expr) = parens (pPrint to) <> pPrint expr
   pPrint (LitInt n) = pPrint n
   pPrint LitTrue = "true"
   pPrint LitFalse = "false"
@@ -102,6 +109,10 @@ instance Pretty Stmt where
     blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt) $+$
     blockPack ("else") (pPrint stmt')
   pPrint (Foreach tvar arr (Block stmt)) =
+    blockPack
+      (text "for" <+> parens (pPrint tvar <+> char ':' <+> pPrint arr))
+      (pPrint stmt)
+  pPrint (Foreach tvar arr stmt) =
     blockPack
       (text "for" <+> parens (pPrint tvar <+> char ':' <+> pPrint arr))
       (pPrint stmt)
