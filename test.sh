@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for f in ./lattests/good/*.lat; do
+for f in ./lattests/{good,extensions/arrays1}/*.lat; do
     OUT="$(mktemp)";
     stack run $f > $OUT;
     echo $f $?;
