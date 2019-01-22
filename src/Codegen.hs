@@ -649,6 +649,7 @@ compileStmt (AST.Decl typ items) = do
           AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
           AST.TBool    -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
           AST.TString  -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
+          (AST.TArray _ t) -> (fromMaybe (AST.New (AST.TArray (Just (AST.LitInt 0)) t))) <$> (snd <$> items')
           _            -> catMaybes $ (snd <$> items')
   results <- mapM compileExpr mexprs
   mapM_ (\(val, addr) -> store val addr) (zip results locs)

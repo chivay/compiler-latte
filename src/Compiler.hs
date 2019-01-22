@@ -128,11 +128,7 @@ checkFunctions = do
               et <- checkExpr expr
               when (not $ typ `assignCompatible` et) $
                 throwError $ TypeError $ (T.pack . show) typ
-            checkItemType (DeclItem _ Nothing) = do
-              when (isArrayType typ) $ throwError $ UninitializedError
-              where
-                isArrayType (TArray _ _) = True
-                isArrayType _            = False
+            checkItemType (DeclItem _ Nothing) = return () -- Default initialization
         checkStmt (Ass lvalue expr) = do
           typ <- resolveLValue lvalue
           typ' <- checkExpr expr
