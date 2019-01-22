@@ -6,10 +6,6 @@ import           System.Environment
 import           System.IO
 import           System.Exit
 
-import           Prettify
-import           Text.PrettyPrint.HughesPJClass
-
-
 failWithError :: String -> IO ()
 failWithError err = do
     hPutStrLn stderr err

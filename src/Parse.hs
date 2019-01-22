@@ -53,6 +53,8 @@ languageDef =
 
 lexer = Token.makeTokenParser languageDef
 
+lexeme = Token.lexeme lexer
+
 identifier = Token.identifier lexer
 
 reserved = Token.reserved lexer
@@ -113,7 +115,7 @@ lValue = do
   return $ foldl (\a i -> i a) (Var base) cont
   where
     fieldAccess = do
-      char '.'
+      lexeme $ char '.'
       field <- ident
       return (Field field)
     indexedAccess = do
@@ -121,35 +123,36 @@ lValue = do
       return (Indexed expr)
 
 stmt :: Parser Stmt
-stmt =
-  whitespace >>
-  (blockStmt <|> try ifElseStmt <|> ifStmt <|> whileStmt <|> returnStmt <|>
-   exprStmt <|>
-   assStmt <|>
-   declStmt <|>
-   incStmt <|>
-   decStmt <|>
-   (semi >> return Empty))
+stmt = choice $ try <$> ([ blockStmt
+              , ifElseStmt
+              , ifStmt
+              , whileStmt
+              , returnStmt
+              , exprStmt
+              , assStmt
+              , declStmt
+              , incStmt
+              , decStmt
+              ])
 
 incStmt :: Parser Stmt
 incStmt =
-  try
     (do var <- lValue
         reservedOp "++"
+        semi
         return $ Incr var)
 
 decStmt :: Parser Stmt
 decStmt =
-  try
     (do var <- lValue
         reservedOp "--"
+        semi
         return $ Decr var)
 
 returnStmt :: Parser Stmt
 returnStmt = do
   reserved "return"
   e <- optionMaybe expr
-  whitespace
   semi
   return $ Ret e
 
@@ -157,7 +160,6 @@ exprStmt :: Parser Stmt
 exprStmt =
   try
     (do e <- try expr
-        whitespace
         semi
         return $ ExpS e)
 
@@ -226,20 +228,20 @@ whileStmt = do
 
 assStmt :: Parser Stmt
 assStmt = do
-  var <-
-    try
-      (do var <- lValue
-          reserved "="
-          return var)
-  Ass var <$> expr
+  var <- lValue
+  lexeme $ char '='
+  exp <- expr
+  semi
+  return $ Ass var exp
 
 varDecl :: Parser DeclItem
 varDecl = try withInit <|> noInit
   where
     withInit = do
       name <- ident
-      reserved "="
-      DeclItem name . Just <$> expr
+      lexeme $ char '='
+      exp <- expr
+      return $ (DeclItem name . Just) exp
     noInit = do
       name <- ident
       return $ DeclItem name Nothing
@@ -248,6 +250,7 @@ declStmt :: Parser Stmt
 declStmt = do
   t <- typ
   items <- commaSep varDecl
+  semi
   return $ Decl t items
 
 typVar :: Parser TypVar
