@@ -73,9 +73,11 @@ data DeclItem =
 
 data Expr
   = Mem LValue
+  | Cast Ident Expr
   | LitInt Integer
   | LitTrue
   | LitFalse
+  | Null
   | Call Ident
          [Expr]
   | LitString T.Text

@@ -31,6 +31,7 @@ languageDef =
         , "return"
         , "new"
         , "for"
+        , "null"
         ]
     , Token.reservedOpNames =
         [ "+"
@@ -204,10 +205,14 @@ expr = buildExpressionParser operators terms
         ]
       ]
     terms =
-      parens expr <|> try functionCall <|> fmap LitInt integer <|>
+      (try $ do target <- parens ident
+                e <- expr
+                return (Cast target e)) <|>
+      (try $ parens expr) <|> try functionCall <|> fmap LitInt integer <|>
       fmap (LitString . T.pack) stringLiteral <|>
       (reserved "true" >> return LitTrue) <|>
       (reserved "false" >> return LitFalse) <|>
+      (reserved "null" >> return Null) <|>
       (do reserved "new"
           t <- initType
           return (New t)) <|>
