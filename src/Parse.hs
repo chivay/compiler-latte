@@ -30,6 +30,7 @@ languageDef =
         , "void"
         , "return"
         , "new"
+        , "for"
         ]
     , Token.reservedOpNames =
         [ "+"
@@ -126,6 +127,7 @@ stmt = choice $ try <$> ([ blockStmt
               , ifElseStmt
               , ifStmt
               , whileStmt
+              , foreachStmt
               , returnStmt
               , exprStmt
               , assStmt
@@ -251,6 +253,17 @@ declStmt = do
   items <- commaSep varDecl
   semi
   return $ Decl t items
+
+foreachStmt :: Parser Stmt
+foreachStmt = do
+    reserved "for"
+    lexeme $ char '('
+    iter <- typVar
+    lexeme $ char ':'
+    arr <- ident
+    lexeme $ char ')'
+    s <- stmt
+    return $ Foreach iter arr s
 
 typVar :: Parser TypVar
 typVar = do

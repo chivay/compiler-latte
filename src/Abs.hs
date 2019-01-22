@@ -56,6 +56,7 @@ data Stmt
            Stmt
   | Loop Expr
          Stmt
+  | Foreach TypVar Ident Stmt
   | ExpS Expr
   deriving (Eq, Show)
 
