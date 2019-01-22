@@ -98,9 +98,8 @@ typ = do
 initType :: Parser Type
 initType = do
   t <- simpleType
-  sizes <- many $ brackets integer
-  let wrapped = foldl (\t n -> TArray (Just n) t) t sizes
-  return wrapped
+  size <- brackets expr
+  return (TArray (Just size) t)
   where
     typInteger = reserved "int" >> return TInteger
     typString = reserved "string" >> return TString

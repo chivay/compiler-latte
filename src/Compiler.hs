@@ -200,7 +200,10 @@ checkFunctions = do
                 throwError $ InvalidTypeError "invalid call"
               return rt
             Nothing -> throwError $ UndefinedVariableError fname
-        checkExpr (New t@(TArray _ _)) = return t
+        checkExpr (New t@(TArray (Just e) _)) = do
+            et <- checkExpr e
+            when (et /= TInteger) $ throwError $ TypeError "Array size must be an integer"
+            return t
         checkExpr (LitString _) = return AST.TString
         checkExpr (Neg expr) = do
           t <- checkExpr expr

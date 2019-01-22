@@ -596,7 +596,7 @@ compileExpr (AST.Or exp exp') = do
 compileExpr (AST.New (AST.TArray (Just size) arrType)) = do
   arr <- allocReg (Ptr I8)
   res <- allocReg (makeLatteArray baseType)
-  arrSize <- allocConst size
+  arrSize <- compileExpr size
   elemSize <- allocConst baseTypeSize
   emit $ Call arr (LLVMGlobalIdent "__alloc_array") [arrSize, elemSize]
   emit $ Bitcast res arr
