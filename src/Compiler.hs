@@ -26,7 +26,8 @@ data CompilerState = CompilerState
   { _filename :: FilePath
   , _src      :: T.Text
   , _ast      :: AST.Program
-  , _topDefs  :: M.Map Ident Type
+  , _fncDefs  :: M.Map Ident Type
+  , _fnBodies :: M.Map Ident TopDef
   , _strDefs  :: M.Map Ident (M.Map Ident Type)
   , _code     :: Maybe C.LLVMModule
   } deriving (Eq, Show)
@@ -39,6 +40,7 @@ type VEnv = M.Map Ident (Type, ScopeLevel)
 
 data TypecheckEnv = TypecheckEnv
   { _funcDefs     :: M.Map Ident Type
+  , _sDefs        :: M.Map Ident (M.Map Ident Type)
   , _vars         :: VEnv
   , _currentScope :: ScopeLevel
   , _returnType   :: Type
@@ -55,19 +57,22 @@ loadTopDefinitions = do
   forM_ tds addDef
   where
     addDef :: TopDef -> CompilerM ()
-    addDef (FuncDef rtype ident args _) = do
-      tds <- gets _topDefs
+    addDef fn@(FuncDef rtype ident args _) = do
+      tds <- gets _fncDefs
       if M.member ident tds
         then throwError (FunctionRedefinitionError ident)
         else modify insertFunc
       where
         ftype = AST.TFunc rtype (removeIdents args)
-        insertFunc s = s {_topDefs = M.insert ident ftype (_topDefs s)}
+        insertFunc s = s {_fncDefs  = M.insert ident ftype (_fncDefs s),
+                          _fnBodies = M.insert ident fn (_fnBodies s)}
     addDef (StructDef ident body) = do
       strs <- gets _strDefs
       if M.member ident strs
         then throwError (StructRedefinitionError ident)
-        else modify insertStruct
+        else do
+            when (length fields /= length body) $ throwError FieldRedefinitionError
+            modify insertStruct
       where
         stype = M.fromList fields
         fields = (\(TypVar t i) -> (i, t)) <$> body
@@ -88,20 +93,28 @@ checkTopDefinitions = do
         return $ ident `M.member` strs
     isLegalType _ = return True
 
+    fieldDefined :: Ident -> Ident -> CompilerM Bool
+    fieldDefined sname field = do
+        strs <- gets _strDefs
+        case M.lookup sname strs of
+          (Just fields) -> return $ field `M.member` fields
+          Nothing -> undefined
+
     checkDef :: AST.TopDef -> CompilerM ()
     checkDef (AST.StructDef sname fields) = mapM_ checkField fields
       where checkField (TypVar t ident) = do
               typeOk <- isLegalType t
               when (not typeOk) $ throwError $ UndefinedType t
-              return()               -- TODO
     checkDef (AST.FuncDef rtype fname args body) = do
-      tds <- gets _topDefs
+      tds <- gets _fncDefs
+      sds <- gets _strDefs
       let initVars =
             M.fromList (fmap (\(TypVar typ name) -> (name, (typ, 0))) args)
       when (M.size initVars /= length args) $ throwError RedefinitionError
       let initialEnv =
             TypecheckEnv
               { _funcDefs = tds
+              , _sDefs = sds
               , _vars = initVars
               , _currentScope = 0
               , _returnType = rtype
@@ -212,6 +225,12 @@ checkTopDefinitions = do
         checkStmt (ExpS expr) = do
           checkExpr expr
           id
+        isLegalTypeExpr :: Type -> TypecheckM Bool
+        isLegalTypeExpr (AST.TStruct ident) = do
+            strs <- asks _sDefs
+            return $ ident `M.member` strs
+        isLegalTypeExpr _ = return True
+
         checkExpr :: Expr -> TypecheckM Type
         checkExpr (Mem lvalue) = do
           typ <- resolveLValue lvalue
@@ -233,6 +252,10 @@ checkTopDefinitions = do
           when (et /= TInteger) $
             throwError $ TypeError "Array size must be an integer"
           return t
+        checkExpr (New t@(TStruct sname)) = do
+            isOk <- isLegalTypeExpr t
+            when (not isOk) $ throwError $ TypeError "No such struct"
+            return (TStruct sname)
         checkExpr (LitString _) = return AST.TString
         checkExpr (Neg expr) = do
           t <- checkExpr expr
@@ -284,14 +307,20 @@ checkTopDefinitions = do
           case baseType of
             (TArray _ _)
               | (field == "length") -> return TInteger
-            _ -> throwError $ TypeError "Structs unimplemented"
+            (TStruct sname) -> do
+                strs <- asks _sDefs
+                case sname `M.lookup` strs of
+                  (Just fields) -> case field `M.lookup` fields of
+                                     (Just ftype) -> return ftype
+                                     Nothing -> throwError $ TypeError "No such field!"
+                  Nothing -> undefined
         id = do
           env <- ask
           return env
 
 checkMain :: CompilerM ()
 checkMain = do
-  tds <- gets _topDefs
+  tds <- gets _fncDefs
   case M.lookup "main" tds of
     Just (TFunc AST.TInteger []) -> return ()
     Just _ -> throwError $ TypeError "wrong main type"
@@ -299,8 +328,8 @@ checkMain = do
 
 checkReturnPaths :: CompilerM ()
 checkReturnPaths = do
-  (AST.Program tds) <- gets _ast
-  forM_ tds checkReturn
+  fncs <- gets _fnBodies
+  forM_ fncs checkReturn
   where
     checkReturn :: AST.TopDef -> CompilerM ()
     checkReturn (FuncDef rtype _ _ stmts) = do
@@ -323,7 +352,7 @@ checkReturnPaths = do
 
 compileFunction :: AST.TopDef -> CompilerM (C.LLVMFunction, [C.LLVMGConst])
 compileFunction td = do
-  localFunctions <- gets _topDefs
+  localFunctions <- gets _fncDefs
   let initialEnv =
         C.CodegenEnv
           { C._varMap = M.empty
@@ -462,7 +491,8 @@ compileProgram prog = do
         { _filename = "prog.lat"
         , _src = "somethin"
         , _ast = prog
-        , _topDefs = initialDefinitions
+        , _fncDefs = initialDefinitions
+        , _fnBodies = M.empty
         , _strDefs = M.empty
         , _code = Nothing
         }

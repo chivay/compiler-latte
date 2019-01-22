@@ -102,14 +102,18 @@ typ = do
 initType :: Parser Type
 initType = do
   t <- simpleType
-  size <- brackets expr
-  return (TArray (Just size) t)
+  x <- many $ brackets expr
+  let wrapped = foldl (\t p -> TArray (Just p) t) t x
+  return wrapped
   where
     typInteger = reserved "int" >> return TInteger
     typString = reserved "string" >> return TString
     typBool = reserved "boolean" >> return TBool
     typVoid = reserved "void" >> return TVoid
-    simpleType = typInteger <|> typString <|> typBool <|> typVoid
+    typStruct = do
+        id <- ident
+        return $ TStruct id
+    simpleType = typInteger <|> typString <|> typBool <|> typVoid <|> typStruct
 
 lValue :: Parser LValue
 lValue = do

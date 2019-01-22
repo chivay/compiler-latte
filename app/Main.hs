@@ -22,7 +22,8 @@ compileFile filename = do
         hPutStrLn stderr "ERROR"
         (failWithError . show) err
     Right program -> do
-        (print.pPrint) program
+        hPutStrLn stderr $ show  program
+        hPutStrLn stderr $ show $ pPrint program
         C.compileProgram program
         hPutStrLn stderr "OK"
 

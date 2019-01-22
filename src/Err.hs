@@ -12,6 +12,7 @@ data CompileError
   = TypeError T.Text
   | FunctionRedefinitionError T.Text
   | StructRedefinitionError T.Text
+  | FieldRedefinitionError
   | RedefinitionError
   | UndefinedFunctionError AST.Ident
   | UndefinedVariableError AST.Ident
