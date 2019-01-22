@@ -101,7 +101,10 @@ instance Pretty Stmt where
   pPrint (IfElse cond stmt stmt') =
     blockPack ("if" <+> parens (pPrint cond)) (pPrint stmt) $+$
     blockPack ("else") (pPrint stmt')
-  pPrint (Foreach tvar arr (Block stmt)) = blockPack (text "for" <+> parens (pPrint tvar <+> char ':' <+> pPrint arr)) (pPrint stmt)
+  pPrint (Foreach tvar arr (Block stmt)) =
+    blockPack
+      (text "for" <+> parens (pPrint tvar <+> char ':' <+> pPrint arr))
+      (pPrint stmt)
 
 instance Pretty Program where
   pPrint (Program tlds) = vcat $ pPrint <$> tlds

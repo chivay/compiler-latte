@@ -123,32 +123,35 @@ lValue = do
       return (Indexed expr)
 
 stmt :: Parser Stmt
-stmt = choice $ try <$> ([ blockStmt
-              , ifElseStmt
-              , ifStmt
-              , whileStmt
-              , foreachStmt
-              , returnStmt
-              , exprStmt
-              , assStmt
-              , declStmt
-              , incStmt
-              , decStmt
-              ])
+stmt =
+  choice $
+  try <$>
+  ([ blockStmt
+   , ifElseStmt
+   , ifStmt
+   , whileStmt
+   , foreachStmt
+   , returnStmt
+   , exprStmt
+   , assStmt
+   , declStmt
+   , incStmt
+   , decStmt
+   ])
 
 incStmt :: Parser Stmt
 incStmt =
-    (do var <- lValue
-        reservedOp "++"
-        semi
-        return $ Incr var)
+  (do var <- lValue
+      reservedOp "++"
+      semi
+      return $ Incr var)
 
 decStmt :: Parser Stmt
 decStmt =
-    (do var <- lValue
-        reservedOp "--"
-        semi
-        return $ Decr var)
+  (do var <- lValue
+      reservedOp "--"
+      semi
+      return $ Decr var)
 
 returnStmt :: Parser Stmt
 returnStmt = do
@@ -256,14 +259,14 @@ declStmt = do
 
 foreachStmt :: Parser Stmt
 foreachStmt = do
-    reserved "for"
-    lexeme $ char '('
-    iter <- typVar
-    lexeme $ char ':'
-    arr <- expr
-    lexeme $ char ')'
-    s <- stmt
-    return $ Foreach iter arr s
+  reserved "for"
+  lexeme $ char '('
+  iter <- typVar
+  lexeme $ char ':'
+  arr <- expr
+  lexeme $ char ')'
+  s <- stmt
+  return $ Foreach iter arr s
 
 typVar :: Parser TypVar
 typVar = do

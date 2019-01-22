@@ -384,12 +384,12 @@ getAddr (AST.Indexed expr lvalue) = do
   offset <- compileExpr expr
   arrPtr <- load lvalue
   r <- allocReg (Ptr I8)
-  let subT = ((getElemType.getType) arrPtr)
+  let subT = ((getElemType . getType) arrPtr)
   res <- allocReg subT
   emit $ Bitcast r arrPtr
   rPtr <- allocReg (Ptr I8)
   emit $ Call rPtr (LLVMGlobalIdent "__get_array_buffer") [r]
-  cPtr <- allocReg (Ptr ((getElemType.getType) arrPtr))
+  cPtr <- allocReg (Ptr ((getElemType . getType) arrPtr))
   emit $ Bitcast cPtr rPtr
   resAddr <- allocReg (Ptr subT)
   emit $ Gep resAddr cPtr [offset]
@@ -647,10 +647,12 @@ compileStmt (AST.Decl typ items) = do
   let mexprs =
         case typ of
           AST.TInteger -> (fromMaybe (AST.LitInt 0)) <$> (snd <$> items')
-          AST.TBool    -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
-          AST.TString  -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
-          (AST.TArray _ t) -> (fromMaybe (AST.New (AST.TArray (Just (AST.LitInt 0)) t))) <$> (snd <$> items')
-          _            -> catMaybes $ (snd <$> items')
+          AST.TBool -> (fromMaybe (AST.LitFalse)) <$> (snd <$> items')
+          AST.TString -> (fromMaybe (AST.LitString "")) <$> (snd <$> items')
+          (AST.TArray _ t) ->
+            (fromMaybe (AST.New (AST.TArray (Just (AST.LitInt 0)) t))) <$>
+            (snd <$> items')
+          _ -> catMaybes $ (snd <$> items')
   results <- mapM compileExpr mexprs
   mapM_ (\(val, addr) -> store val addr) (zip results locs)
   env <- ask
@@ -729,20 +731,17 @@ compileStmt (AST.Foreach (AST.TypVar typ ident) arr stmt) = do
   emit $ Call rPtr (LLVMGlobalIdent "__get_array_buffer") [ptr]
   cPtr <- allocReg (Ptr ((getElemType . getType) arrPtr))
   emit $ Bitcast cPtr rPtr
-
   -- compile rest
   condBlock <- newBlock
   bodyBlock <- newBlock
   postBlock <- newBlock
   emit $ Br condBlock
-
   setCurrentBlock condBlock
   j <- allocReg I32
   emit $ Load j iterator
   cmpRes <- allocReg I1
   emit $ ICmp Slt cmpRes j length
   emit $ BrCond cmpRes bodyBlock postBlock
-
   setCurrentBlock bodyBlock
   k <- allocReg I32
   v <- allocReg ((getElemType . getType) arrPtr)
@@ -751,8 +750,10 @@ compileStmt (AST.Foreach (AST.TypVar typ ident) arr stmt) = do
   emit $ Gep elemAddr cPtr [k]
   emit $ Load v elemAddr
   emit $ Store v value
-  local (\env -> env {_varMap = M.union (M.singleton ident (value, typ)) (_varMap env)}) (compileStmt stmt)
-
+  local
+    (\env ->
+       env {_varMap = M.union (M.singleton ident (value, typ)) (_varMap env)})
+    (compileStmt stmt)
   -- increment iterator
   i <- allocReg I32
   ip <- allocReg I32
@@ -761,7 +762,6 @@ compileStmt (AST.Foreach (AST.TypVar typ ident) arr stmt) = do
   emit $ Add ip i one
   emit $ Store ip iterator
   emit $ Br condBlock
-
   setCurrentBlock postBlock
   nop
   where
