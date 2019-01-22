@@ -339,7 +339,7 @@ type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
 
 currentFuncName :: CodegenM AST.Ident
 currentFuncName = do
-  (AST.TopDef _ ident _ _) <- gets _ast
+  (AST.FuncDef _ ident _ _) <- gets _ast
   return ident
 
 newBlock :: CodegenM LLVMLabel
@@ -803,7 +803,7 @@ mangleFunctionName ident = T.append "latte_" ident
 
 generateFirstBlock :: CodegenM (CodegenEnv, LLVMFuncDef)
 generateFirstBlock = do
-  (AST.TopDef rtype fname args _) <- gets _ast
+  (AST.FuncDef rtype fname args _) <- gets _ast
   env <- ask
   let rtyp' = getLLVMType rtype
   let fname' = mangleFunctionName fname
@@ -827,7 +827,7 @@ generateFirstBlock = do
 generateCode :: CodegenM LLVMFunction
 generateCode = do
   (startenv, def) <- generateFirstBlock
-  (AST.TopDef rtype _ _ stmts) <- gets _ast
+  (AST.FuncDef rtype _ _ stmts) <- gets _ast
   entry <- newBlock
   let stmts' =
         if rtype == AST.TVoid

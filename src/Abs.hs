@@ -24,11 +24,13 @@ newtype Program =
   Program [TopDef]
   deriving (Eq, Show)
 
-data TopDef =
-  TopDef Type
-         Ident
-         [TypVar]
-         [Stmt]
+data TopDef
+  = FuncDef Type
+            Ident
+            [TypVar]
+            [Stmt]
+  | StructDef Ident
+              [TypVar]
   deriving (Eq, Show)
 
 data LValue

@@ -5,6 +5,9 @@ import qualified Compiler                       as C
 import           System.Environment
 import           System.IO
 import           System.Exit
+import Prettify
+import           Text.PrettyPrint
+import           Text.PrettyPrint.HughesPJClass
 
 failWithError :: String -> IO ()
 failWithError err = do
@@ -19,6 +22,7 @@ compileFile filename = do
         hPutStrLn stderr "ERROR"
         (failWithError . show) err
     Right program -> do
+        (print.pPrint) program
         C.compileProgram program
         hPutStrLn stderr "OK"
 

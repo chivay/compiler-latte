@@ -54,7 +54,7 @@ loadTopDefinitions = do
   forM_ tds addDef
   where
     addDef :: TopDef -> CompilerM ()
-    addDef (TopDef rtype ident args _) = do
+    addDef (FuncDef rtype ident args _) = do
       tds <- gets _topDefs
       if M.member ident tds
         then throwError (FunctionRedefinitionError ident)
@@ -73,7 +73,7 @@ checkFunctions = do
   forM_ tds checkDef
   where
     checkDef :: AST.TopDef -> CompilerM ()
-    checkDef (AST.TopDef rtype fname args body) = do
+    checkDef (AST.FuncDef rtype fname args body) = do
       tds <- gets _topDefs
       let initVars =
             M.fromList (fmap (\(TypVar typ name) -> (name, (typ, 0))) args)
@@ -282,7 +282,7 @@ checkReturnPaths = do
   forM_ tds checkReturn
   where
     checkReturn :: AST.TopDef -> CompilerM ()
-    checkReturn (TopDef rtype _ _ stmts) = do
+    checkReturn (FuncDef rtype _ _ stmts) = do
       let (nret, ret) = break willReturn stmts
       when
         (rtype /= AST.TVoid)

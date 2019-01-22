@@ -274,13 +274,26 @@ typVar = do
   TypVar t <$> ident
 
 topDef :: Parser TopDef
-topDef = do
-  whitespace
-  t <- typ
-  name <- ident
-  args <- parens (commaSep typVar)
-  (Block stmts) <- blockStmt
-  return $ TopDef t name args stmts
+topDef = choice [funcDef, structDef]
+  where
+    funcDef = do
+      whitespace
+      t <- typ
+      name <- ident
+      args <- parens (commaSep typVar)
+      (Block stmts) <- blockStmt
+      return $ FuncDef t name args stmts
+    structDef = do
+      whitespace
+      reserved "class"
+      structName <- ident
+      decls <- braces (many fieldDecl)
+      return $ StructDef structName decls
+      where
+        fieldDecl = do
+          field <- typVar
+          semi
+          return $ field
 
 program :: Parser Program
 program = Program <$> many topDef <* eof

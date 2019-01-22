@@ -13,11 +13,15 @@ instance Pretty T.Text where
   pPrint ident = text $ T.unpack ident
 
 instance Pretty TopDef where
-  pPrint (TopDef typ name args stmts) = blockPack funcHeader body
+  pPrint (FuncDef typ name args stmts) = blockPack funcHeader body
     where
       funcHeader = pPrint typ <+> pPrint name <> lparen <> header <> rparen
       header = hsep $ punctuate comma (pPrint <$> args)
       body = vcat $ pPrint <$> stmts
+  pPrint (StructDef name fields) =
+    blockPack
+      (text "class" <+> pPrint name)
+      (vcat $ (<> semi) <$> pPrint <$> fields)
 
 instance Pretty Type where
   pPrint TInteger = "int"
