@@ -1,7 +1,7 @@
 module Abs where
 
+import qualified Data.Map  as M
 import qualified Data.Text as T
-import qualified Data.Map as M
 
 type Ident = T.Text
 
