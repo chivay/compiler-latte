@@ -267,7 +267,8 @@ checkTopDefinitions = do
             Nothing -> throwError $ UndefinedVariableError fname
         checkExpr (CallMethod lvalue exprs) = do
           args <- mapM checkExpr exprs
-          (TFunc rtyp _) <- resolveMethodCall lvalue
+          (TFunc rtyp params) <- resolveMethodCall lvalue
+          when (args /= params) $ throwError $ TypeError "Incompatible arguments"
           return rtyp
         checkExpr (New t@(TArray (Just e) _)) = do
           et <- checkExpr e
@@ -409,14 +410,28 @@ checkReturnPaths = do
     willReturn (IfElse _ stmt stmt')    = willReturn stmt && willReturn stmt'
     willReturn _                        = False
 
+generateVTables :: CompilerM (M.Map Ident (M.Map Ident Integer))
+generateVTables = do
+    methods <- gets _metDefs
+    let res = generateVTable <$> (M.toList methods)
+    return $ M.fromList res
+    where generateVTable :: (Ident, M.Map Ident TopDef) -> (Ident, M.Map Ident Integer)
+          generateVTable (i, methods) = (i, M.fromList $ zip names [0..])
+            where (names, bodies) = unzip (M.toList methods)
+
+
 compileFunction :: AST.TopDef -> CompilerM (C.LLVMFunction, [C.LLVMGConst])
 compileFunction td = do
   localFunctions <- gets _fncDefs
   structDefs <- gets _strDefs
+  methodDefs <- gets _metDefs
+  vtables <- generateVTables
   let initialEnv =
         C.CodegenEnv
           { C._varMap = M.empty
           , C._sDefs = structDefs
+          , C._vtables = vtables
+          , C._mDefs = methodDefs
           , C._funcRet =
               (M.fromList
                  [ libraryFunction "printInt" C.Void
@@ -534,7 +549,7 @@ generateCode = do
       C.LLVMStructDef (C.LLVMIdent $ mangleIdent name) typFields
       where
         mangleIdent name = "latte_obj_" `T.append` name
-        typFields = C.getLLVMType <$> snd <$> M.toList fields
+        typFields = (C.Ptr C.I8) : (C.getLLVMType <$> snd <$> M.toList fields)
 
 compileProgram :: AST.Program -> IO ()
 compileProgram prog = do

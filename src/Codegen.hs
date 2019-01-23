@@ -47,6 +47,7 @@ data LLVMType
   | Void
   | Ptr LLVMType
   | String
+  | Func LLVMType [LLVMType]
   | Array Integer
           LLVMType
   | Struct [LLVMType]
@@ -97,16 +98,17 @@ instance Pretty LLVMExternFunc where
     pPrint name <+> parens (hsep $ punctuate comma (pPrint <$> args))
 
 instance Pretty LLVMType where
-  pPrint I64           = "i64"
-  pPrint I32           = "i32"
-  pPrint I8            = "i8"
-  pPrint I1            = "i1"
-  pPrint Void          = "void"
-  pPrint (Ptr typ)     = pPrint typ <> char '*'
-  pPrint String        = "%__string"
-  pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
-  pPrint (Struct ts)   = (braces . hcat) (punctuate comma (pPrint <$> ts))
-  pPrint (Extern name) = pPrint $ "%latte_obj_" `T.append` name
+  pPrint I64              = "i64"
+  pPrint I32              = "i32"
+  pPrint I8               = "i8"
+  pPrint I1               = "i1"
+  pPrint Void             = "void"
+  pPrint (Ptr typ)        = pPrint typ <> char '*'
+  pPrint String           = "%__string"
+  pPrint (Array n typ)    = brackets (pPrint n <+> char 'x' <+> pPrint typ)
+  pPrint (Struct ts)      = (braces . hcat) (punctuate comma (pPrint <$> ts))
+  pPrint (Extern name)    = pPrint $ "%latte_obj_" `T.append` name
+  pPrint (Func rtyp args) = pPrint rtyp <+> parens (hsep $ punctuate comma (pPrint <$> args))
 
 data LLVMValue
   = LLVMConst LLVMType
@@ -153,6 +155,9 @@ data LLVMIR
          LLVMValue
   | Call LLVMValue
          LLVMGlobalIdent
+         [LLVMValue]
+  | CallPtr LLVMValue
+         LLVMValue
          [LLVMValue]
   | ICmp CmpOp
          LLVMValue
@@ -244,6 +249,16 @@ instance Pretty LLVMIR where
   pPrint (Call r func args) =
     prefix <+>
     pPrint func <>
+    parens
+      (hsep $ punctuate comma ((\arg -> printType arg <+> pPrint arg) <$> args))
+    where
+      prefix =
+        case getType r of
+          Void -> text "call" <+> text "void"
+          typ  -> pPrint r <+> char '=' <+> text "call" <+> printType r
+  pPrint (CallPtr r ptr args) =
+    prefix <+>
+    pPrint ptr <>
     parens
       (hsep $ punctuate comma ((\arg -> printType arg <+> pPrint arg) <$> args))
     where
@@ -345,7 +360,9 @@ data CodegenState = CodegenState
 data CodegenEnv = CodegenEnv
   { _varMap  :: M.Map AST.Ident (LLVMValue, AST.Type)
   , _sDefs   :: M.Map AST.Ident (M.Map AST.Ident AST.Type)
+  , _mDefs   :: M.Map AST.Ident (M.Map AST.Ident AST.TopDef)
   , _funcRet :: M.Map LLVMGlobalIdent (LLVMGlobalIdent, LLVMType)
+  , _vtables :: M.Map AST.Ident (M.Map AST.Ident Integer)
   } deriving (Show)
 
 type CodegenM = ReaderT CodegenEnv (StateT CodegenState (Except CompileError))
@@ -422,7 +439,7 @@ getAddr (AST.Field field base) = do
       res <- allocReg (Ptr (getLLVMType typ))
       emit $ Gep res basePtr [zero, offset]
       return res
-    Nothing -> undefined
+    Nothing -> throwError $ CodegenError "Field not found"
 
 allocReg :: LLVMType -> CodegenM LLVMValue
 allocReg typ = do
@@ -538,6 +555,37 @@ compileExpr (AST.Call ident exprs) = do
   output <- allocReg rtype
   emit $ Call output mident res
   return output
+compileExpr (AST.CallMethod (AST.Field method obj) exprs) = do
+  vtables <- asks _vtables
+  objects <- asks _mDefs
+  zero <- allocConst 0
+  objPtr <- load obj
+  vtablePtr <- allocReg (Ptr (Ptr I8))
+  vtableMid <- allocReg (Ptr I8)
+  vtable <- allocReg (Ptr (Ptr I8))
+  emit $ Gep vtablePtr objPtr [zero, zero]
+  emit $ Load vtableMid vtablePtr
+  emit $ Bitcast vtable vtableMid
+  let (Ptr (Extern sname)) = getType objPtr
+  let thisObj = objects M.! sname
+  let (AST.FuncDef rType _ _ _ ) = thisObj M.! method
+  case sname `M.lookup` vtables of
+    (Just vtableM) ->
+      case method `M.lookup` vtableM of
+        (Just idx) -> do
+          offset <- allocConst idx
+          funPtrAddr <- allocReg (Ptr (Ptr I8))
+          emit $ Gep funPtrAddr vtable [offset]
+          funPtr <- allocReg (Ptr I8)
+          emit $ Load funPtr funPtrAddr
+          args <- mapM compileExpr exprs
+          res <- allocReg (getLLVMType rType)
+          cFunPtr <- allocReg (Ptr (Func (getLLVMType rType) (getType <$> args)))
+          emit $ Bitcast cFunPtr funPtr
+          emit $ CallPtr res cFunPtr args
+          return res
+        Nothing -> throwError $ CodegenError "No entry for virtual method"
+    Nothing -> throwError $ CodegenError "No vtable for this type"
 compileExpr (AST.Neg exp) = compileExpr (AST.Add AST.Minus (AST.LitInt 0) exp)
 compileExpr (AST.Not exp) = do
   e <- compileExpr exp
