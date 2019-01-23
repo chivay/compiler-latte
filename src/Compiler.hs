@@ -69,7 +69,7 @@ loadTopDefinitions = do
             { _fncDefs = M.insert ident ftype (_fncDefs s)
             , _fnBodies = M.insert ident fn (_fnBodies s)
             }
-    addDef (StructDef ident body) = do
+    addDef (StructDef ident body methods) = do
       strs <- gets _strDefs
       if M.member ident strs
         then throwError (StructRedefinitionError ident)
@@ -102,7 +102,7 @@ checkTopDefinitions = do
         (Just fields) -> return $ field `M.member` fields
         Nothing       -> undefined
     checkDef :: AST.TopDef -> CompilerM ()
-    checkDef (AST.StructDef sname fields) = mapM_ checkField fields
+    checkDef (AST.StructDef sname fields methods) = mapM_ checkField fields
       where
         checkField (TypVar t ident) = do
           typeOk <- isLegalType t

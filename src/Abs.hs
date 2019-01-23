@@ -33,6 +33,7 @@ data TopDef
             [Stmt]
   | StructDef Ident
               [TypVar]
+              [TopDef]
   deriving (Eq, Show)
 
 data LValue
@@ -81,6 +82,7 @@ data Expr
   | Null
   | Call Ident
          [Expr]
+  | CallMethod LValue [Expr]
   | LitString T.Text
   | Neg Expr
   | Not Expr

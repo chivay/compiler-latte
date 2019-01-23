@@ -211,6 +211,7 @@ expr = buildExpressionParser operators terms
          return (Cast target e)) <|>
       (try $ parens expr) <|>
       try functionCall <|>
+      try methodCall <|>
       fmap LitInt integer <|>
       fmap (LitString . T.pack) stringLiteral <|>
       (reserved "true" >> return LitTrue) <|>
@@ -224,6 +225,10 @@ expr = buildExpressionParser operators terms
       name <- ident
       args <- parens (commaSep expr)
       return $ Call name args
+    methodCall = do
+      obj <- lValue
+      args <- parens (commaSep expr)
+      return $ CallMethod obj args
 
 ifStmt :: Parser Stmt
 ifStmt = do
@@ -302,8 +307,12 @@ topDef = choice [funcDef, structDef]
       whitespace
       reserved "class"
       structName <- ident
-      decls <- braces (many fieldDecl)
-      return $ StructDef structName decls
+      (decls, methods) <-
+        braces
+          (do fields <- many (try fieldDecl)
+              methods <- many (try funcDef)
+              return (fields, methods))
+      return $ StructDef structName decls methods
       where
         fieldDecl = do
           field <- typVar

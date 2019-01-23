@@ -18,10 +18,10 @@ instance Pretty TopDef where
       funcHeader = pPrint typ <+> pPrint name <> lparen <> header <> rparen
       header = hsep $ punctuate comma (pPrint <$> args)
       body = vcat $ pPrint <$> stmts
-  pPrint (StructDef name fields) =
+  pPrint (StructDef name fields methods) =
     blockPack
       (text "class" <+> pPrint name)
-      (vcat $ (<> semi) <$> pPrint <$> fields)
+      (vcat $ ((<> semi) <$> pPrint <$> fields) ++ (pPrint <$> methods))
 
 instance Pretty Type where
   pPrint TInteger = "int"
@@ -47,6 +47,8 @@ instance Pretty Expr where
   pPrint LitFalse = "false"
   pPrint (Call name args) =
     pPrint name <> parens (hsep $ punctuate comma (pPrint <$> args))
+  pPrint (CallMethod lvalue args) =
+    pPrint lvalue <> parens (hsep $ punctuate comma (pPrint <$> args))
   pPrint (New typ) = text "new" <+> pPrint typ
   pPrint (LitString str) = doubleQuotes $ pPrint str
   pPrint (Neg expr) = char '-' <> parens (pPrint expr)
