@@ -26,9 +26,10 @@ data CompilerState = CompilerState
   { _filename :: FilePath
   , _src      :: T.Text
   , _ast      :: AST.Program
-  , _fncDefs  :: M.Map Ident Type
-  , _fnBodies :: M.Map Ident TopDef
-  , _strDefs  :: M.Map Ident (M.Map Ident Type)
+  , _fncDefs  :: M.Map Ident Type -- function name -> function type
+  , _fnBodies :: M.Map Ident TopDef -- function name -> function body
+  , _strDefs  :: M.Map Ident (M.Map Ident Type) -- object name -> field -> type
+  , _metDefs  :: M.Map Ident (M.Map Ident TopDef) -- object name -> method -> type
   , _code     :: Maybe C.LLVMModule
   } deriving (Eq, Show)
 
@@ -41,6 +42,7 @@ type VEnv = M.Map Ident (Type, ScopeLevel)
 data TypecheckEnv = TypecheckEnv
   { _funcDefs     :: M.Map Ident Type
   , _sDefs        :: M.Map Ident (M.Map Ident Type)
+  , _mDefs        :: M.Map Ident (M.Map Ident TopDef)
   , _vars         :: VEnv
   , _currentScope :: ScopeLevel
   , _returnType   :: Type
@@ -78,8 +80,14 @@ loadTopDefinitions = do
           modify insertStruct
       where
         stype = M.fromList fields
+        mtype = M.fromList ms
+        ms = (\f@(FuncDef rtyp name args stmts) -> (name, f)) <$> methods
         fields = (\(TypVar t i) -> (i, t)) <$> body
-        insertStruct s = s {_strDefs = M.insert ident stype (_strDefs s)}
+        insertStruct s =
+          s
+            { _strDefs = M.insert ident stype (_strDefs s)
+            , _metDefs = M.insert ident mtype (_metDefs s)
+            }
 
 assignCompatible :: Type -> Type -> Bool
 assignCompatible (TArray _ subT) (TArray _ subT') = assignCompatible subT subT'
@@ -110,6 +118,7 @@ checkTopDefinitions = do
     checkDef (AST.FuncDef rtype fname args body) = do
       tds <- gets _fncDefs
       sds <- gets _strDefs
+      mds <- gets _metDefs
       let initVars =
             M.fromList (fmap (\(TypVar typ name) -> (name, (typ, 0))) args)
       when (M.size initVars /= length args) $ throwError RedefinitionError
@@ -117,6 +126,7 @@ checkTopDefinitions = do
             TypecheckEnv
               { _funcDefs = tds
               , _sDefs = sds
+              , _mDefs = mds
               , _vars = initVars
               , _currentScope = 0
               , _returnType = rtype
@@ -255,6 +265,10 @@ checkTopDefinitions = do
                 throwError $ InvalidTypeError "invalid call"
               return rt
             Nothing -> throwError $ UndefinedVariableError fname
+        checkExpr (CallMethod lvalue exprs) = do
+          args <- mapM checkExpr exprs
+          (TFunc rtyp _) <- resolveMethodCall lvalue
+          return rtyp
         checkExpr (New t@(TArray (Just e) _)) = do
           et <- checkExpr e
           when (et /= TInteger) $
@@ -345,6 +359,20 @@ checkTopDefinitions = do
                     (Just ftype) -> return ftype
                     Nothing      -> throwError $ TypeError "No such field!"
                 Nothing -> undefined
+        resolveMethodCall :: LValue -> TypecheckM Type
+        resolveMethodCall (Field method lvalue) = do
+          baseType <- resolveLValue lvalue
+          case baseType of
+            (TStruct sname) -> do
+              strs <- asks _mDefs
+              case sname `M.lookup` strs of
+                (Just methods) ->
+                  case method `M.lookup` methods of
+                    (Just td) -> do
+                      let (FuncDef rtyp _ args _) = td
+                      return $ TFunc rtyp (removeIdents args)
+                    Nothing -> throwError NoMethodError
+                _ -> throwError UndefinedStructError
         id = do
           env <- ask
           return env
@@ -536,6 +564,7 @@ compileProgram prog = do
         , _fncDefs = initialDefinitions
         , _fnBodies = M.empty
         , _strDefs = M.empty
+        , _metDefs = M.empty
         , _code = Nothing
         }
     initialDefinitions =

@@ -82,7 +82,8 @@ data Expr
   | Null
   | Call Ident
          [Expr]
-  | CallMethod LValue [Expr]
+  | CallMethod LValue
+               [Expr]
   | LitString T.Text
   | Neg Expr
   | Not Expr

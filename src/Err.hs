@@ -20,6 +20,8 @@ data CompileError
   | InvalidTypeError AST.Ident
   | ReturnPathError
   | UninitializedError
+  | NoMethodError
+  | UndefinedStructError
   | InvalidCastError T.Text
   | StmtLocatedError AST.Stmt
                      CompileError
