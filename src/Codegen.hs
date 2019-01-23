@@ -47,7 +47,8 @@ data LLVMType
   | Void
   | Ptr LLVMType
   | String
-  | Func LLVMType [LLVMType]
+  | Func LLVMType
+         [LLVMType]
   | Array Integer
           LLVMType
   | Struct [LLVMType]
@@ -60,9 +61,11 @@ latteString = Ptr String
 makeLatteArray :: LLVMType -> LLVMType
 makeLatteArray t = Ptr $ Struct [I32, t]
 
-data LLVMGConst =
-  LLVMStringConst LLVMValue
-                  B.ByteString
+data LLVMGConst
+  = LLVMStringConst LLVMValue
+                    B.ByteString
+  | LLVMVTableConst LLVMValue
+                    [LLVMValue]
   deriving (Eq, Show)
 
 instance Pretty LLVMGConst where
@@ -98,17 +101,18 @@ instance Pretty LLVMExternFunc where
     pPrint name <+> parens (hsep $ punctuate comma (pPrint <$> args))
 
 instance Pretty LLVMType where
-  pPrint I64              = "i64"
-  pPrint I32              = "i32"
-  pPrint I8               = "i8"
-  pPrint I1               = "i1"
-  pPrint Void             = "void"
-  pPrint (Ptr typ)        = pPrint typ <> char '*'
-  pPrint String           = "%__string"
-  pPrint (Array n typ)    = brackets (pPrint n <+> char 'x' <+> pPrint typ)
-  pPrint (Struct ts)      = (braces . hcat) (punctuate comma (pPrint <$> ts))
-  pPrint (Extern name)    = pPrint $ "%latte_obj_" `T.append` name
-  pPrint (Func rtyp args) = pPrint rtyp <+> parens (hsep $ punctuate comma (pPrint <$> args))
+  pPrint I64 = "i64"
+  pPrint I32 = "i32"
+  pPrint I8 = "i8"
+  pPrint I1 = "i1"
+  pPrint Void = "void"
+  pPrint (Ptr typ) = pPrint typ <> char '*'
+  pPrint String = "%__string"
+  pPrint (Array n typ) = brackets (pPrint n <+> char 'x' <+> pPrint typ)
+  pPrint (Struct ts) = (braces . hcat) (punctuate comma (pPrint <$> ts))
+  pPrint (Extern name) = pPrint $ "%latte_obj_" `T.append` name
+  pPrint (Func rtyp args) =
+    pPrint rtyp <+> parens (hsep $ punctuate comma (pPrint <$> args))
 
 data LLVMValue
   = LLVMConst LLVMType
@@ -157,8 +161,8 @@ data LLVMIR
          LLVMGlobalIdent
          [LLVMValue]
   | CallPtr LLVMValue
-         LLVMValue
-         [LLVMValue]
+            LLVMValue
+            [LLVMValue]
   | ICmp CmpOp
          LLVMValue
          LLVMValue
@@ -568,7 +572,7 @@ compileExpr (AST.CallMethod (AST.Field method obj) exprs) = do
   emit $ Bitcast vtable vtableMid
   let (Ptr (Extern sname)) = getType objPtr
   let thisObj = objects M.! sname
-  let (AST.FuncDef rType _ _ _ ) = thisObj M.! method
+  let (AST.FuncDef rType _ _ _) = thisObj M.! method
   case sname `M.lookup` vtables of
     (Just vtableM) ->
       case method `M.lookup` vtableM of
@@ -580,7 +584,8 @@ compileExpr (AST.CallMethod (AST.Field method obj) exprs) = do
           emit $ Load funPtr funPtrAddr
           args <- mapM compileExpr exprs
           res <- allocReg (getLLVMType rType)
-          cFunPtr <- allocReg (Ptr (Func (getLLVMType rType) (getType <$> args)))
+          cFunPtr <-
+            allocReg (Ptr (Func (getLLVMType rType) (getType <$> args)))
           emit $ Bitcast cFunPtr funPtr
           emit $ CallPtr res cFunPtr args
           return res
@@ -694,8 +699,10 @@ compileExpr (AST.New t@(AST.TStruct sname)) = do
   objSize <- allocReg I32
   emit $ Ptrtoint objSize offset
   -- allocate memory for object
+  let vtable =
+        LLVMGlobal (Ptr I8) (LLVMGlobalIdent $ "vtable_" `T.append` sname)
   sPtr8 <- allocReg (Ptr I8)
-  emit $ Call sPtr8 (LLVMGlobalIdent "calloc") [objSize, one]
+  emit $ Call sPtr8 (LLVMGlobalIdent "__alloc_object") [objSize, vtable]
   sPtr <- allocReg objPtr
   emit $ Bitcast sPtr sPtr8
   return sPtr

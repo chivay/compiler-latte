@@ -27,6 +27,14 @@ void __panic(const char *msg)
     abort();
 }
 
+void *__alloc_object(int32_t size, void *vtable) {
+    struct {
+        void *vtable;
+    } *objptr = calloc(1, size);
+    objptr->vtable = vtable;
+    return objptr;
+}
+
 struct __array *__alloc_array(int32_t nitems, int32_t el_size)
 {
     struct __array *arr = malloc(sizeof (struct __array));

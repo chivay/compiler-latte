@@ -487,11 +487,21 @@ compileFunction td = do
         , C._blocks = M.empty
         }
 
+compileMethod :: AST.TopDef -> CompilerM (C.LLVMFunction, [C.LLVMGConst])
+compileMethod = undefined
+
+compileClass :: (Ident, M.Map Ident TopDef) -> CompilerM [(C.LLVMFunction, [C.LLVMGConst])]
+compileClass (cName, methods) = do
+    output <- mapM compileMethod (snd <$> M.toList methods)
+    return output
+
 generateCode :: CompilerM ()
 generateCode = do
   f <- gets _fnBodies
   objectDefs <- gets _strDefs
+  classDefs <- gets _metDefs
   output <- mapM compileFunction (snd <$> M.toList f)
+  mapM_ compileClass (M.toList classDefs)
   let funcs = fst <$> output
   let globals = foldl (++) [] (snd <$> output)
   let mod =
@@ -531,7 +541,7 @@ generateCode = do
                   (C.Ptr C.I8)
                   (func "__get_array_buffer")
                   [C.Ptr C.I8]
-              , C.LLVMExternFunc (C.Ptr C.I8) (func "calloc") [C.I32, C.I32]
+              , C.LLVMExternFunc (C.Ptr C.I8) (func "__alloc_object") [C.I32, C.Ptr C.I8]
               ]
           , C._structs =
               [ C.LLVMStructDef
